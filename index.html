@@ -2952,8 +2952,8 @@ const Sim = {
           }
         }
 
-        // Traffic jam check by speed (every 5s, checks obstacles within 5km ahead)
-        if (S.speed > 0 && S.speed < 30 && this._tick % 50 === 0) {
+        // Traffic jam check (every 5s, checks obstacles within configured radius ahead)
+        if (this._tick % 50 === 0) {
           const road = MapMgr.getRoadName(S.route);
           const km = MapMgr.getKm(S.pos.lat, S.pos.lng);
           const dir = MapMgr.getDirection(S.route, S.pos.lat, S.pos.lng);
