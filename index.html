@@ -1,0 +1,1383 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>EcoDriven Venezuela — IA Copiloto</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#080a0e;--panel:#0e1117;--surface:#161a24;--border:#252c3a;
+  --cyan:#00e5ff;--green:#00ff88;--orange:#ff8800;--red:#ff2244;--yellow:#ffdd00;
+  --text:#c8d4e8;--text-dim:#5a6680;
+  --glow-cyan:0 0 12px rgba(0,229,255,0.25),0 0 40px rgba(0,229,255,0.08);
+  --glow-green:0 0 12px rgba(0,255,136,0.25);--glow-orange:0 0 12px rgba(255,136,0,0.3);
+  --glow-red:0 0 12px rgba(255,34,68,0.4);
+  --font-display:'Orbitron',monospace;--font-mono:'Share Tech Mono',monospace;
+  --radius:8px;
+}
+html,body{height:100%;overflow-x:hidden}
+body{
+  font-family:var(--font-mono);background:var(--bg);color:var(--text);
+  display:flex;flex-direction:column;min-height:100vh;-webkit-tap-highlight-color:transparent
+}
+::-webkit-scrollbar{width:4px}
+::-webkit-scrollbar-track{background:var(--panel)}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+
+/* HEADER */
+.header{
+  background:linear-gradient(180deg,var(--surface),var(--panel));
+  border-bottom:1px solid var(--border);padding:6px 12px;
+  display:flex;align-items:center;justify-content:space-between;gap:8px;
+  position:relative;z-index:1000;flex-wrap:wrap;min-height:44px
+}
+.header .logo{
+  font-family:var(--font-display);font-size:12px;font-weight:700;
+  letter-spacing:2px;text-transform:uppercase;color:var(--cyan);
+  text-shadow:var(--glow-cyan);display:flex;align-items:center;gap:8px;white-space:nowrap
+}
+.header .logo svg{width:22px;height:22px;flex-shrink:0}
+.header .logo span.sub{font-weight:400;color:var(--text-dim);font-size:8px;letter-spacing:1px}
+.header-right{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.weather-badge{
+  display:flex;align-items:center;gap:6px;
+  background:var(--surface);border:1px solid var(--border);border-radius:20px;
+  padding:3px 12px 3px 8px;font-size:11px;cursor:pointer;transition:border-color .2s
+}
+.weather-badge:hover{border-color:var(--cyan)}
+.weather-badge .temp{font-family:var(--font-display);color:var(--cyan);font-size:12px}
+.weather-badge .cond{color:var(--text-dim);font-size:9px;text-transform:uppercase;letter-spacing:.5px}
+.clock{font-family:var(--font-display);font-size:12px;color:var(--cyan);letter-spacing:1px;white-space:nowrap}
+.header select{
+  background:var(--bg);color:var(--text);border:1px solid var(--border);
+  padding:4px 8px;font-family:var(--font-mono);font-size:10px;border-radius:4px;
+  cursor:pointer;outline:none;max-width:180px
+}
+.header select:focus{border-color:var(--cyan)}
+
+/* MAIN LAYOUT */
+.main-grid{
+  display:grid;grid-template-columns:340px 1fr;grid-template-rows:1fr auto;
+  gap:0;flex:1;min-height:0
+}
+@media(max-width:960px){.main-grid{grid-template-columns:1fr;grid-template-rows:auto 320px auto auto}}
+
+/* DIGITAL PANEL */
+.digital-panel{
+  background:var(--panel);border-right:1px solid var(--border);
+  padding:10px;display:flex;flex-direction:column;gap:8px;overflow-y:auto
+}
+@media(max-width:960px){.digital-panel{border-right:none;border-bottom:1px solid var(--border)}}
+
+/* Speedometer digital */
+.speedo-digital{
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+  padding:16px 12px;text-align:center;position:relative;overflow:hidden
+}
+.speedo-digital::before{
+  content:'';position:absolute;inset:0;
+  background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,229,255,0.02) 2px,rgba(0,229,255,0.02) 4px);
+  pointer-events:none
+}
+.speedo-digital .speed-unit{
+  font-family:var(--font-display);font-size:10px;letter-spacing:3px;
+  color:var(--text-dim);text-transform:uppercase;margin-bottom:2px
+}
+.speedo-digital .speed-value{
+  font-family:var(--font-display);font-size:72px;font-weight:900;line-height:1;
+  letter-spacing:4px;color:var(--cyan);text-shadow:var(--glow-cyan);
+  transition:color .2s;word-break:break-word
+}
+.speedo-digital .speed-value.warn{color:var(--orange);text-shadow:var(--glow-orange)}
+.speedo-digital .speed-value.alert{color:var(--red);text-shadow:var(--glow-red);animation:speedPulse .5s infinite}
+@keyframes speedPulse{0%,100%{opacity:1}50%{opacity:.6}}
+.speedo-digital .speed-kmh{font-family:var(--font-display);font-size:12px;color:var(--text-dim);letter-spacing:4px;margin-top:2px}
+
+/* Secondary row */
+.secondary-row{
+  display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px
+}
+.secondary-item{
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+  padding:8px 6px;text-align:center
+}
+.secondary-item .lbl{
+  font-size:7px;text-transform:uppercase;letter-spacing:1px;color:var(--text-dim);font-family:var(--font-display)
+}
+.secondary-item .val{
+  font-family:var(--font-display);font-size:18px;font-weight:700;line-height:1.2;margin:2px 0
+}
+.secondary-item .val.cyan{color:var(--cyan);text-shadow:var(--glow-cyan)}
+.secondary-item .val.green{color:var(--green);text-shadow:var(--glow-green)}
+.secondary-item .val.orange{color:var(--orange);text-shadow:var(--glow-orange)}
+.secondary-item .val.red{color:var(--red);text-shadow:var(--glow-red)}
+.secondary-item .sub{font-size:8px;color:var(--text-dim)}
+
+/* Fuel & range */
+.fuel-row{
+  display:grid;grid-template-columns:1fr 1fr;gap:6px
+}
+.fuel-item{
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+  padding:8px;text-align:center
+}
+.fuel-item .lbl{font-size:7px;text-transform:uppercase;letter-spacing:1px;color:var(--text-dim);font-family:var(--font-display)}
+.fuel-item .big{font-family:var(--font-display);font-size:20px;font-weight:900;margin:2px 0}
+.fuel-item .big.green{color:var(--green);text-shadow:var(--glow-green)}
+.fuel-item .big.orange{color:var(--orange);text-shadow:var(--glow-orange)}
+.fuel-item .big.red{color:var(--red);text-shadow:var(--glow-red)}
+.fuel-item .sub{font-size:8px;color:var(--text-dim)}
+.fuel-bar{height:6px;background:var(--bg);border-radius:3px;overflow:hidden;margin:4px 0;border:1px solid var(--border)}
+.fuel-bar-fill{height:100%;background:linear-gradient(90deg,var(--red),var(--orange),var(--green));border-radius:2px;transition:width .5s}
+.fuel-set{display:flex;gap:4px;margin-top:4px}
+.fuel-set input{flex:1;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:4px 6px;font-family:var(--font-mono);font-size:11px;border-radius:4px;outline:none;width:60px}
+.fuel-set input:focus{border-color:var(--cyan)}
+.fuel-set button{background:var(--surface);border:1px solid var(--border);color:var(--cyan);padding:4px 10px;font-family:var(--font-display);font-size:9px;border-radius:4px;cursor:pointer}
+.fuel-set button:hover{border-color:var(--cyan);background:rgba(0,229,255,.08)}
+
+/* Eco score ring */
+.eco-bar{
+  display:flex;align-items:center;gap:10px;
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:8px 12px
+}
+.eco-ring-wrap{width:48px;height:48px;position:relative;flex-shrink:0}
+.eco-ring-wrap canvas{width:100%;height:100%}
+.eco-num{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-family:var(--font-display);font-size:16px;font-weight:900}
+.eco-info{font-size:9px;color:var(--text-dim);line-height:1.4}
+.eco-info strong{color:var(--text)}
+
+/* MAP */
+.map-panel{position:relative;display:flex;flex-direction:column;min-height:0}
+#map{flex:1;min-height:280px;background:var(--bg)}
+.map-badges{
+  position:absolute;top:8px;left:8px;right:8px;z-index:1000;
+  display:flex;gap:6px;flex-wrap:wrap;pointer-events:none
+}
+.map-badges>*{pointer-events:auto}
+.map-badge{
+  background:rgba(14,17,23,.92);border:1px solid var(--border);border-radius:6px;
+  padding:4px 10px;font-size:9px;font-family:var(--font-display);backdrop-filter:blur(6px);
+  display:flex;align-items:center;gap:6px;color:var(--text)
+}
+.map-badge .dot{display:inline-block;width:6px;height:6px;border-radius:50%}
+
+.elevation-mini{
+  position:absolute;bottom:70px;right:8px;z-index:1000;
+  background:rgba(14,17,23,.92);border:1px solid var(--border);border-radius:6px;
+  padding:6px 10px;font-size:9px;font-family:var(--font-display);backdrop-filter:blur(6px);pointer-events:none
+}
+.elevation-mini .row{display:flex;align-items:center;gap:8px;margin:1px 0}
+.elevation-mini .lbl{color:var(--text-dim);font-size:7px;text-transform:uppercase;letter-spacing:1px}
+.elevation-mini .val{color:var(--cyan)}
+.elevation-mini .val.up{color:var(--orange)}
+.elevation-mini .val.down{color:var(--green)}
+
+/* AI COPILOT OVERLAY ON MAP */
+.copilot-map-overlay{
+  position:absolute;bottom:8px;left:8px;right:8px;z-index:1000;pointer-events:none;
+  display:flex;flex-direction:column;gap:4px;max-height:160px;overflow:hidden
+}
+.copilot-map-overlay>*{pointer-events:auto}
+.copilot-alert{
+  background:rgba(14,17,23,.95);border:1px solid var(--border);border-radius:6px;
+  padding:8px 10px;backdrop-filter:blur(6px);display:flex;align-items:flex-start;gap:8px;
+  animation:slideIn .3s ease-out;box-shadow:0 4px 16px rgba(0,0,0,.5);font-size:11px
+}
+.copilot-alert.warning{border-color:var(--orange);box-shadow:0 0 12px rgba(255,136,0,.12)}
+.copilot-alert.critical{border-color:var(--red);box-shadow:0 0 12px rgba(255,34,68,.15)}
+.copilot-alert.success{border-color:var(--green)}
+.copilot-alert.info{border-color:var(--cyan)}
+.copilot-alert .icon{font-size:16px;flex-shrink:0;margin-top:1px}
+.copilot-alert .body{flex:1;min-width:0}
+.copilot-alert .title{font-family:var(--font-display);font-size:10px;font-weight:700;letter-spacing:.5px;text-transform:uppercase}
+.copilot-alert.warning .title{color:var(--orange)}
+.copilot-alert.critical .title{color:var(--red)}
+.copilot-alert.success .title{color:var(--green)}
+.copilot-alert.info .title{color:var(--cyan)}
+.copilot-alert .desc{font-size:9px;color:var(--text-dim);line-height:1.4;margin-top:1px}
+@keyframes slideIn{from{transform:translateY(16px);opacity:0}to{transform:none;opacity:1}}
+
+/* SCREEN FLASH */
+.flash-overlay{position:fixed;inset:0;pointer-events:none;z-index:9999;transition:background .15s}
+.flash-overlay.active{background:rgba(255,34,68,.1)}
+
+/* BOTTOM PANEL */
+.bottom-panel{
+  display:grid;grid-template-columns:1fr 1fr;border-top:1px solid var(--border);
+  background:var(--panel);max-height:200px;overflow:hidden
+}
+@media(max-width:900px){.bottom-panel{grid-template-columns:1fr;max-height:none}}
+
+.bottom-section{padding:8px 12px;overflow-y:auto}
+.section-title{
+  font-family:var(--font-display);font-size:8px;letter-spacing:2px;
+  text-transform:uppercase;color:var(--text-dim);margin-bottom:6px;
+  border-bottom:1px solid var(--border);padding-bottom:4px;display:flex;justify-content:space-between;align-items:center
+}
+.section-title .action{color:var(--cyan);cursor:pointer;font-size:8px;letter-spacing:1px}
+.section-title .action:hover{text-shadow:var(--glow-cyan)}
+
+/* Telemetry table */
+.tm-table{width:100%;font-size:10px;border-collapse:collapse}
+.tm-table th{
+  font-family:var(--font-display);font-size:7px;letter-spacing:1px;text-transform:uppercase;
+  color:var(--text-dim);padding:3px 6px;text-align:left;border-bottom:1px solid var(--border)
+}
+.tm-table td{padding:3px 6px;border-bottom:1px solid rgba(37,44,58,.4)}
+.tm-table .num{font-family:var(--font-display);font-weight:600;color:var(--cyan)}
+.tm-table .num.green{color:var(--green)}
+.tm-table .num.orange{color:var(--orange)}
+.tm-table .num.red{color:var(--red)}
+
+/* Trip log modal */
+.modal-overlay{
+  display:none;position:fixed;inset:0;z-index:10000;
+  background:rgba(0,0,0,.7);backdrop-filter:blur(4px);
+  align-items:center;justify-content:center;padding:16px
+}
+.modal-overlay.open{display:flex}
+.modal{
+  background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);
+  max-width:700px;width:100%;max-height:80vh;display:flex;flex-direction:column;
+  box-shadow:0 8px 40px rgba(0,0,0,.6);animation:modalIn .25s ease-out
+}
+@keyframes modalIn{from{transform:scale(.95) translateY(20px);opacity:0}to{transform:none;opacity:1}}
+.modal-header{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:12px 16px;border-bottom:1px solid var(--border)
+}
+.modal-header h2{font-family:var(--font-display);font-size:12px;letter-spacing:2px;text-transform:uppercase;color:var(--cyan)}
+.modal-close{background:none;border:none;color:var(--text-dim);font-size:18px;cursor:pointer;padding:4px}
+.modal-close:hover{color:var(--red)}
+.modal-body{overflow-y:auto;padding:12px 16px;flex:1}
+.modal-body .empty{text-align:center;color:var(--text-dim);padding:40px 20px;font-size:12px}
+.trip-card{
+  background:var(--surface);border:1px solid var(--border);border-radius:6px;
+  padding:10px 12px;margin-bottom:8px;font-size:10px
+}
+.trip-card .trip-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px}
+.trip-card .trip-date{font-family:var(--font-display);font-size:10px;color:var(--cyan)}
+.trip-card .trip-route{color:var(--text-dim);font-size:9px}
+.trip-card .trip-stats{display:flex;gap:12px;flex-wrap:wrap;margin-top:4px}
+.trip-card .trip-stat{font-size:9px}
+.trip-card .trip-stat strong{color:var(--text);font-weight:400}
+.trip-card .trip-events{margin-top:4px;display:flex;gap:4px;flex-wrap:wrap}
+.trip-card .trip-events span{
+  background:rgba(255,255,255,.05);border-radius:3px;padding:1px 6px;font-size:8px;color:var(--text-dim)
+}
+.clear-log{font-size:9px;color:var(--red);cursor:pointer;font-family:var(--font-mono)}
+
+/* Controls bar */
+.controls-bar{
+  display:flex;align-items:center;gap:6px;padding:4px 0;flex-wrap:wrap
+}
+.controls-bar label{font-size:8px;text-transform:uppercase;letter-spacing:1px;color:var(--text-dim);font-family:var(--font-display);min-width:36px}
+.controls-bar input[type=range]{
+  flex:1;min-width:60px;height:3px;-webkit-appearance:none;appearance:none;
+  background:var(--border);border-radius:2px;outline:none
+}
+.controls-bar input[type=range]::-webkit-slider-thumb{
+  -webkit-appearance:none;width:12px;height:12px;border-radius:50%;
+  background:var(--cyan);cursor:pointer;box-shadow:var(--glow-cyan)
+}
+.controls-bar .cv{font-family:var(--font-display);font-size:10px;min-width:40px;text-align:right;color:var(--text)}
+
+/* RESPONSIVE BREAKPOINTS */
+@media(max-width:480px){
+  .header .logo{font-size:9px;letter-spacing:1px}
+  .header .logo span.sub{display:none}
+  .header select{font-size:8px;max-width:120px;padding:3px 4px}
+  .clock{font-size:10px}
+  .weather-badge{padding:2px 8px 2px 6px;font-size:9px}
+  .weather-badge .temp{font-size:10px}
+  .digital-panel{padding:6px}
+  .speedo-digital{padding:10px 8px}
+  .speedo-digital .speed-value{font-size:48px}
+  .secondary-row{gap:4px}
+  .secondary-item{padding:6px 4px}
+  .secondary-item .val{font-size:14px}
+  .fuel-row{gap:4px}
+  .fuel-item{padding:6px}
+  .fuel-item .big{font-size:16px}
+  .eco-bar{padding:6px 8px}
+  .bottom-section{padding:6px 8px}
+  .tm-table{font-size:8px}
+  .tm-table th,.tm-table td{padding:2px 4px}
+  .map-badges{top:4px;left:4px;right:4px}
+  .map-badge{font-size:8px;padding:3px 6px}
+  .copilot-map-overlay{bottom:4px;left:4px;right:4px}
+  .elevation-mini{display:none}
+}
+
+/* Leaflet overrides */
+.leaflet-tooltip{
+  background:rgba(14,17,23,.95)!important;border:1px solid var(--border)!important;
+  color:var(--text)!important;font-family:var(--font-mono)!important;
+  font-size:9px!important;border-radius:4px!important;padding:3px 8px!important;
+  box-shadow:0 2px 8px rgba(0,0,0,.5)!important
+}
+.leaflet-tooltip-top::before{border-top-color:var(--border)!important}
+.leaflet-tooltip-bottom::before{border-bottom-color:var(--border)!important}
+.leaflet-control-zoom a{
+  background:var(--surface)!important;color:var(--text)!important;
+  border-color:var(--border)!important;width:28px!important;height:28px!important;line-height:28px!important;font-size:14px!important
+}
+.leaflet-control-zoom a:hover{background:var(--panel)!important;color:var(--cyan)!important}
+.leaflet-control-attribution{display:none!important}
+</style>
+</head>
+<body>
+
+<div class="flash-overlay" id="flashOverlay"></div>
+
+<!-- HEADER -->
+<header class="header">
+  <div class="logo">
+    <svg viewBox="0 0 28 28"><circle cx="14" cy="14" r="12" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="14" cy="14" r="6" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="14" cy="14" r="2" fill="currentColor"/><path d="M14 2v4M14 22v4M2 14h4M22 14h4" stroke="currentColor" stroke-width="1.5"/></svg>
+    <span>EcoDriven</span><span class="sub">VE</span>
+  </div>
+  <div class="header-right">
+    <div class="weather-badge" id="weatherBadge" title="Clima actual">
+      <span id="weatherIcon">☀️</span>
+      <span class="temp" id="weatherTemp">--°</span>
+      <span class="cond" id="weatherCond">--</span>
+    </div>
+    <select id="routeSelect">
+      <option value="teques-caracas">Los Teques → Caracas</option>
+      <option value="caracas-guaira">Caracas → La Guaira</option>
+      <option value="teques-sananto">Los Teques → San Antonio</option>
+      <option value="full-commute">Commute Loop</option>
+      <option value="custom">Ruta Libre</option>
+    </select>
+    <span class="clock" id="clockDisplay">00:00</span>
+  </div>
+</header>
+
+<!-- MAIN LAYOUT -->
+<div class="main-grid">
+
+  <!-- DIGITAL PANEL -->
+  <div class="digital-panel">
+    <!-- Speedometer -->
+    <div class="speedo-digital">
+      <div class="speed-unit">Velocidad</div>
+      <div class="speed-value" id="speedDisplay">0</div>
+      <div class="speed-kmh">km/h</div>
+    </div>
+
+    <!-- Secondary row: RPM - Gear - Predicted Speed -->
+    <div class="secondary-row">
+      <div class="secondary-item">
+        <div class="lbl">RPM</div>
+        <div class="val cyan" id="rpmDisplay">0</div>
+        <div class="sub">rpm</div>
+      </div>
+      <div class="secondary-item">
+        <div class="lbl">Marcha</div>
+        <div class="val green" id="gearDisplay">N</div>
+        <div class="sub" id="gearConfidence">--</div>
+      </div>
+      <div class="secondary-item">
+        <div class="lbl">Predicción</div>
+        <div class="val orange" id="predictedSpeedDisplay">0</div>
+        <div class="sub">km/h (10s)</div>
+      </div>
+    </div>
+
+    <!-- Controls -->
+    <div class="controls-bar">
+      <label>Vel</label>
+      <input type="range" id="speedSlider" min="0" max="160" value="0" step="1">
+      <span class="cv" id="speedVal">0</span>
+    </div>
+    <div class="controls-bar">
+      <label>Pen</label>
+      <input type="range" id="slopeSlider" min="-15" max="15" value="0" step="0.5">
+      <span class="cv" id="slopeVal">0%</span>
+    </div>
+    <div class="controls-bar">
+      <label>Acel</label>
+      <input type="range" id="throttleSlider" min="0" max="100" value="30" step="1">
+      <span class="cv" id="throttleVal">30%</span>
+    </div>
+
+    <!-- Eco score -->
+    <div class="eco-bar">
+      <div class="eco-ring-wrap">
+        <canvas id="ecoScoreCanvas"></canvas>
+        <div class="eco-num" id="ecoScoreDisplay">100</div>
+      </div>
+      <div class="eco-info">
+        <div>Puntuación Eco-Conducción</div>
+        <div><strong id="optTimeDisplay">0</strong>s en rango óptimo · <strong id="tripTimeDisplay">00:00</strong></div>
+      </div>
+    </div>
+
+    <!-- Fuel -->
+    <div class="fuel-row">
+      <div class="fuel-item">
+        <div class="lbl">Combustible</div>
+        <div class="big green" id="fuelLevelDisplay">46.0</div>
+        <div class="sub">Litros</div>
+        <div class="fuel-bar"><div class="fuel-bar-fill" id="fuelBarFill" style="width:100%"></div></div>
+        <div class="fuel-set">
+          <input type="number" id="fuelInput" value="46" min="0" max="46" step="0.5">
+          <button id="fuelSetBtn">Fijar</button>
+        </div>
+      </div>
+      <div class="fuel-item">
+        <div class="lbl">Rendimiento</div>
+        <div class="big green" id="efficiencyDisplay">12.5</div>
+        <div class="sub">km/L</div>
+        <div style="margin-top:4px;font-family:var(--font-display);font-size:13px;font-weight:700;color:var(--cyan)" id="rangeDisplay">575</div>
+        <div class="sub">km autonomía</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MAP -->
+  <div class="map-panel">
+    <div id="map"></div>
+
+    <div class="map-badges">
+      <div class="map-badge"><span class="dot" style="background:var(--cyan)"></span><span id="mapAltitude">0 m</span></div>
+      <div class="map-badge"><span class="dot" style="background:var(--orange)"></span>Pdte: <span id="mapSlope">0%</span></div>
+      <div class="map-badge"><span class="dot" style="background:var(--green)"></span>Efic: <span id="mapEfficiency">12.5</span></div>
+      <div class="map-badge"><span class="dot" style="background:var(--yellow)"></span>Tráf: <span id="mapTraffic">Normal</span></div>
+    </div>
+
+    <div class="elevation-mini" id="elevationMini">
+      <div class="row"><span class="lbl">ALT</span><span class="val" id="elevVal">0 m</span></div>
+      <div class="row"><span class="lbl">PEND</span><span class="val" id="slopeDisplay">0%</span></div>
+      <div class="row"><span class="lbl">TERR</span><span class="val" id="terrainDisplay">Llano</span></div>
+    </div>
+
+    <div class="copilot-map-overlay" id="copilotOverlay"></div>
+  </div>
+</div>
+
+<!-- BOTTOM PANEL -->
+<div class="bottom-panel">
+  <div class="bottom-section">
+    <div class="section-title">📊 Telemetría del Viaje <span class="action" onclick="TripLog.openModal()">📋 Ver Bitácora</span></div>
+    <table class="tm-table">
+      <thead><tr>
+        <th>Distancia</th><th>Comb. Quemado</th><th>RPM Prom</th><th>Vel Prom</th><th>Pend. Max</th><th>Alertas</th>
+      </tr></thead>
+      <tbody>
+        <tr>
+          <td class="num" id="tripDist">0.0 km</td>
+          <td class="num" id="tripFuel">0.00 L</td>
+          <td class="num" id="tripAvgRpm">0</td>
+          <td class="num" id="tripAvgSpeed">0</td>
+          <td class="num" id="tripMaxSlope">0%</td>
+          <td class="num" id="tripAlerts">0</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="bottom-section">
+    <div class="section-title">🤖 IA Copiloto · Razonamiento <span class="action" id="aiStatus">Conectando...</span></div>
+    <div style="font-size:9px;color:var(--text-dim);line-height:1.5" id="aiReasoning">
+      Iniciando análisis de ruta...
+    </div>
+  </div>
+</div>
+
+<!-- TRIP LOG MODAL -->
+<div class="modal-overlay" id="tripLogModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h2>📋 Bitácora de Viajes</h2>
+      <div style="display:flex;gap:10px;align-items:center">
+        <span class="clear-log" onclick="TripLog.clear()">🗑️ Limpiar todo</span>
+        <button class="modal-close" onclick="TripLog.closeModal()">✕</button>
+      </div>
+    </div>
+    <div class="modal-body" id="tripLogBody">
+      <div class="empty">Cargando...</div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ JAVASCRIPT ============ -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+// ============================================================
+//  CONSTANTS
+// ============================================================
+const GEAR_RATIOS = [0, 3.73, 2.14, 1.41, 1.12, 0.89];
+const FINAL_DRIVE = 3.72;
+const WHEEL_CIRC = 1.807;
+const FUEL_CAP = 46;
+const BASE_KPL = 12.5;
+const REDLINE = 6000;
+const MAX_SPEED = 160;
+const CHECKPOINT_RADIUS = 500;
+
+// ============================================================
+//  AUDIO
+// ============================================================
+const AudioMgr = {
+  ctx: null,
+  init() { try { this.ctx = new (window.AudioContext || window.webkitAudioContext)(); } catch(e) {} },
+  beep(freq = 660, dur = 120, vol = 0.1) {
+    if (!this.ctx) return;
+    if (this.ctx.state === 'suspended') this.ctx.resume();
+    const o = this.ctx.createOscillator(), g = this.ctx.createGain();
+    o.type = 'sine'; o.frequency.setValueAtTime(freq, this.ctx.currentTime);
+    g.gain.setValueAtTime(vol, this.ctx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + dur / 1000);
+    o.connect(g); g.connect(this.ctx.destination);
+    o.start(); o.stop(this.ctx.currentTime + dur / 1000);
+  },
+  alert() { this.beep(660, 180, 0.18); setTimeout(() => this.beep(880, 180, 0.18), 220); },
+  warn() { this.beep(440, 250, 0.15); },
+  eco() { this.beep(520, 80, 0.1); }
+};
+
+// ============================================================
+//  STATE
+// ============================================================
+const S = {
+  speed: 0, rpm: 0, gear: 0, throttle: 30,
+  slope: 0, altitude: 0,
+  fuel: 46, dist: 0, burned: 0,
+  eco: 100, optTime: 0, totalTime: 0,
+  rpmSum: 0, rpmCount: 0, maxSlope: 0,
+  speedSum: 0, speedCount: 0, alertsCount: 0,
+  eff: BASE_KPL, range: 575,
+  pos: { lat: 10.4806, lng: -66.9036 },
+  route: 'teques-caracas', running: false,
+  predictedSpeed: 0,
+  parked: false, parkTime: 0,
+  tripStart: null, tripActive: false,
+  speedHistory: [],
+  weather: { temp: 24, cond: 'Despejado', icon: '☀️', alerts: [] },
+  ai: { status: 'Idle', lastThinking: '' }
+};
+
+// ============================================================
+//  MATH ENGINE
+// ============================================================
+function calcRPM(speed, gear) {
+  if (gear < 1 || speed < 1) return 0;
+  return (speed * GEAR_RATIOS[gear] * FINAL_DRIVE * 1000) / (60 * WHEEL_CIRC);
+}
+
+function detectGear(speed, rpm) {
+  if (speed < 1 || rpm < 50) return 0;
+  const ratio = (rpm * 60 * WHEEL_CIRC) / (speed * 1000 * FINAL_DRIVE);
+  let best = 0, bestDiff = Infinity;
+  for (let g = 1; g <= 5; g++) {
+    const diff = Math.abs(ratio - GEAR_RATIOS[g]);
+    if (diff < bestDiff) { bestDiff = diff; best = g; }
+  }
+  if (bestDiff > 0.8) return 0; // too uncertain
+  return best;
+}
+
+function predictSpeed(history) {
+  if (history.length < 3) return history.length > 0 ? history[history.length - 1] : 0;
+  const recent = history.slice(-10);
+  const dt = 0.1;
+  let accel = 0, count = 0;
+  for (let i = 1; i < recent.length; i++) {
+    accel += (recent[i] - recent[i - 1]) / dt;
+    count++;
+  }
+  accel = count > 0 ? accel / count : 0;
+  const last = recent[recent.length - 1];
+  return Math.max(0, Math.min(MAX_SPEED, last + accel * 10));
+}
+
+function optimalRPMRange(slope) {
+  if (slope > 5) return { min: 2200, max: 2600, label: 'Subida' };
+  if (slope < -5) return { min: 1200, max: 2000, label: 'Bajada' };
+  return { min: 1800, max: 2400, label: 'Llano' };
+}
+
+function optimalSpeedRange(slope) {
+  if (slope > 5) return { min: 55, max: 60 };
+  if (slope < -5) return { min: 20, max: 80 };
+  return { min: 60, max: 70 };
+}
+
+function calcFuelRate(speed, gear, slope, throttle) {
+  if (gear < 1) return 0;
+  if (speed > 20 && slope < -5 && throttle <= 5) return Infinity; // fuel cut
+  let rate = BASE_KPL;
+  const rpm = calcRPM(speed, gear);
+  if (speed > 75 || rpm > 2800) rate /= 1.3;
+  if (slope > 5) rate /= 1.5;
+  if (speed < 10) rate /= 0.4;
+  return rate;
+}
+
+function calcEco(speed, rpm, slope) {
+  const optR = optimalRPMRange(slope);
+  const optS = optimalSpeedRange(slope);
+  let s = 100;
+  if (rpm > 0 && (rpm < optR.min || rpm > optR.max)) s -= 15;
+  if (speed > 0 && (speed < optS.min || speed > optS.max)) s -= 10;
+  if (slope > 8 && rpm < 2000) s -= 20;
+  if (speed > 80) s -= 5;
+  return Math.max(0, Math.min(100, s));
+}
+
+// ============================================================
+//  AI PREDICTOR (async/sync reasoning)
+// ============================================================
+const AIPredictor = {
+  _calls: 0,
+  _cache: {},
+
+  async think(state) {
+    this._calls++;
+    const ctx = { ...state, ts: Date.now() };
+    const cacheKey = `${Math.round(ctx.speed)}_${ctx.gear}_${Math.round(ctx.slope)}`;
+
+    // Simulate async AI call
+    await new Promise(r => setTimeout(r, 50 + Math.random() * 80));
+
+    const results = {
+      trafficRisk: this._calcTrafficRisk(ctx),
+      checkpointProximity: this._findNearest(ctx, 'checkpoint'),
+      trafficLightProximity: this._findNearest(ctx, 'trafficlight'),
+      accidentRisk: this._calcAccidentRisk(ctx),
+      parkingDetected: this._detectParking(ctx),
+      optimalAdvice: this._generateAdvice(ctx),
+      weatherImpact: this._weatherImpact(ctx)
+    };
+
+    this._cache[cacheKey] = results;
+    return results;
+  },
+
+  _calcTrafficRisk(ctx) {
+    if (ctx.speed < 5 && ctx.speed > 0) return { risk: 'alta', msg: 'Tráfico denso detectado·Velocidad muy reducida', level: 'warning' };
+    if (ctx.speed < 15 && ctx.speed > 0) return { risk: 'media', msg: 'Flujo vehicular lento·Posible congestión', level: 'info' };
+    if (ctx.speed < 30) return { risk: 'baja', msg: 'Tráfico moderado en la zona', level: 'info' };
+    return null;
+  },
+
+  _findNearest(ctx, type) {
+    const items = type === 'checkpoint' ? MapMgr.checkpoints : MapMgr.trafficLights;
+    if (!items) return null;
+    for (const item of items) {
+      const dist = haversine(ctx.lat, ctx.lng, item.lat, item.lng) * 1000;
+      if (dist < CHECKPOINT_RADIUS + 200) {
+        return { ...item, dist: Math.round(dist) };
+      }
+    }
+    return null;
+  },
+
+  _calcAccidentRisk(ctx) {
+    let risk = 0;
+    const reasons = [];
+    if (ctx.speed > 80) { risk += 30; reasons.push('Alta velocidad'); }
+    if (ctx.slope > 10 && ctx.speed > 60) { risk += 25; reasons.push('Bajada pronunciada + velocidad'); }
+    if (ctx.slope < -8 && ctx.speed > 70) { risk += 20; reasons.push('Curva peligrosa'); }
+    if (ctx.speed > 50 && ctx.gear > 0 && ctx.rpm > 4500) { risk += 15; reasons.push('Sobrerevolucionado'); }
+    if (risk > 50) return { risk: 'alta', score: risk, msg: '🚨 Riesgo de accidente: ' + reasons.join(', '), level: 'critical' };
+    if (risk > 20) return { risk: 'media', score: risk, msg: '⚠️ Precaución: ' + reasons.join(', '), level: 'warning' };
+    return null;
+  },
+
+  _detectParking(ctx) {
+    if (ctx.speed === 0 && ctx.engineOn && ctx.parked === false) {
+      return { justParked: true, msg: 'Vehículo estacionado·Ubicación registrada' };
+    }
+    return null;
+  },
+
+  _generateAdvice(ctx) {
+    const optR = optimalRPMRange(ctx.slope);
+    const optS = optimalSpeedRange(ctx.slope);
+    if (ctx.rpm > 0 && ctx.rpm < optR.min && ctx.slope > 5) return { type: 'eco', msg: `Reduce marcha: RPM muy bajo (${Math.round(ctx.rpm)}) para subida` };
+    if (ctx.rpm > optR.max && ctx.gear < 5) return { type: 'eco', msg: `Sube marcha para ahorrar combustible (${Math.round(ctx.rpm)} RPM)` };
+    if (ctx.speed > 75) return { type: 'speed', msg: `Exceso de velocidad: ${Math.round(ctx.speed)} km/h·Máx recomendado 70 km/h` };
+    if (ctx.speed >= 60 && ctx.speed <= 70 && ctx.rpm >= 1800 && ctx.rpm <= 2400 && ctx.slope <= 5) {
+      return { type: 'success', msg: 'Conducción óptima·Mantén este ritmo ✓' };
+    }
+    return null;
+  },
+
+  _weatherImpact(ctx) {
+    if (!ctx.weather) return null;
+    const w = ctx.weather;
+    if (w.cond === 'Lluvia' || w.cond === 'Tormenta') {
+      return { msg: `Clima adverso (${w.cond})·Reduce velocidad un 20%`, level: 'warning' };
+    }
+    if (w.cond === 'Niebla') return { msg: 'Niebla en la ruta·Mantén distancia', level: 'warning' };
+    return null;
+  }
+};
+
+function haversine(lat1, lon1, lat2, lon2) {
+  const R = 6371, dL = (lat2 - lat1) * Math.PI / 180, dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dL / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+// ============================================================
+//  ECO SCORE RING
+// ============================================================
+const EcoRing = {
+  c: null, ctx: null,
+  init() {
+    this.c = document.getElementById('ecoScoreCanvas');
+    this.ctx = this.c.getContext('2d');
+    this.resize();
+  },
+  resize() {
+    const dpr = window.devicePixelRatio || 1;
+    const sz = 48 * dpr;
+    this.c.width = sz; this.c.height = sz;
+    this.draw(100);
+  },
+  draw(score) {
+    const ctx = this.ctx, dpr = window.devicePixelRatio || 1;
+    const w = this.c.width, h = this.c.height, cx = w / 2, cy = h / 2, r = w / 2 - 3 * dpr;
+    ctx.clearRect(0, 0, w, h);
+    ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.strokeStyle = '#252c3a'; ctx.lineWidth = 3 * dpr; ctx.stroke();
+    const frac = Math.max(0, Math.min(1, score / 100));
+    const color = score >= 80 ? '#00ff88' : score >= 50 ? '#ff8800' : '#ff2244';
+    ctx.beginPath(); ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + frac * Math.PI * 2);
+    ctx.strokeStyle = color; ctx.lineWidth = 3 * dpr; ctx.lineCap = 'round'; ctx.stroke();
+  }
+};
+
+// ============================================================
+//  MAP MANAGER
+// ============================================================
+const MapMgr = {
+  map: null, marker: null, routeLine: null, checkpoints: [], trafficLights: [], hazards: [],
+  elevProfile: {},
+
+  routes: {
+    'teques-caracas': {
+      coords: [[10.3433,-67.0336],[10.3550,-67.0200],[10.3700,-67.0000],[10.3900,-66.9700],[10.4100,-66.9400],[10.4300,-66.9200],[10.4500,-66.9000],[10.4600,-66.8800],[10.4700,-66.8700],[10.4806,-66.9036]],
+      label: 'Los Teques → Caracas'
+    },
+    'caracas-guaira': {
+      coords: [[10.4806,-66.9036],[10.4900,-66.9200],[10.5000,-66.9400],[10.5200,-66.9600],[10.5400,-66.9800],[10.5600,-67.0000],[10.5800,-67.0200],[10.5900,-67.0400],[10.6000,-67.0500],[10.6036,-67.0300]],
+      label: 'Caracas → La Guaira'
+    },
+    'teques-sananto': {
+      coords: [[10.3433,-67.0336],[10.3500,-67.0500],[10.3600,-67.0700],[10.3700,-67.0800],[10.3800,-67.0700],[10.3850,-67.0550],[10.3869,-67.0500]],
+      label: 'Los Teques → San Antonio'
+    },
+    'full-commute': {
+      coords: [[10.3433,-67.0336],[10.3500,-67.0200],[10.3700,-66.9900],[10.4000,-66.9500],[10.4300,-66.9200],[10.4600,-66.8900],[10.4806,-66.9036],[10.4900,-66.9300],[10.5000,-66.9600],[10.5200,-66.9800],[10.5400,-66.9900],[10.5600,-66.9700],[10.5400,-66.9500],[10.5100,-66.9200],[10.4800,-66.9000],[10.4500,-66.9100],[10.4200,-66.9400],[10.3900,-66.9700],[10.3600,-67.0000],[10.3433,-67.0336]],
+      label: 'Commute Loop'
+    }
+  },
+
+  checkpointData: [
+    { lat: 10.3700, lng: -67.0000, name: 'Alcabala El Limón', type: 'alcabala' },
+    { lat: 10.4300, lng: -66.9200, name: 'Retén Las Adjuntas', type: 'reten' },
+    { lat: 10.4900, lng: -66.9300, name: 'Alcabala La Yaguara', type: 'alcabala' },
+    { lat: 10.5200, lng: -66.9700, name: 'Punto Control Maiquetía', type: 'reten' },
+    { lat: 10.3850, lng: -67.0550, name: 'Alcabala San Antonio', type: 'alcabala' }
+  ],
+  hazardData: [
+    { lat: 10.3800, lng: -66.9900, name: 'Derrumbe frecuente', type: 'landslide' },
+    { lat: 10.4450, lng: -66.9100, name: 'Baches profundos', type: 'pothole' },
+    { lat: 10.5050, lng: -66.9550, name: 'Zona de inundación', type: 'flood' }
+  ],
+  trafficLightData: [
+    { lat: 10.3550, lng: -67.0200, name: 'Semáforo El Limón' },
+    { lat: 10.3900, lng: -66.9700, name: 'Semáforo San Diego' },
+    { lat: 10.4300, lng: -66.9200, name: 'Semáforo Las Adjuntas' },
+    { lat: 10.4600, lng: -66.8800, name: 'Semáforo Ruiz Pineda' },
+    { lat: 10.5000, lng: -66.9600, name: 'Semáforo Catia' }
+  ],
+
+  init(routeId) {
+    if (this.map) this.map.remove();
+    this.map = L.map('map', { center: [10.4, -66.95], zoom: 11, zoomControl: false, attributionControl: false });
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom: 19 }).addTo(this.map);
+    L.control.zoom({ position: 'bottomright' }).addTo(this.map);
+    const icon = L.divIcon({
+      html: '<div style="width:14px;height:14px;background:#00e5ff;border-radius:50%;border:2px solid #fff;box-shadow:0 0 12px rgba(0,229,255,0.5)"></div>',
+      iconSize: [14,14], iconAnchor: [7,7], className: ''
+    });
+    this.marker = L.marker([S.pos.lat, S.pos.lng], { icon }).addTo(this.map);
+    this.loadRoute(routeId);
+    this._addMarkers();
+    this._simTraffic();
+  },
+
+  loadRoute(routeId) {
+    if (this.routeLine) this.routeLine.remove();
+    const r = this.routes[routeId];
+    if (!r) return;
+    S.route = routeId;
+    this.routeLine = L.polyline(r.coords, { color: '#00e5ff', weight: 2.5, opacity: 0.6, dashArray: '6,10' }).addTo(this.map);
+    this.map.fitBounds(this.routeLine.getBounds().pad(0.2));
+    this._fetchElev(r.coords);
+  },
+
+  async _fetchElev(coords) {
+    try {
+      const locs = coords.map(c => `${c[0]},${c[1]}`).join('|');
+      const r = await fetch(`https://api.open-elevation.com/api/v1/lookup?locations=${locs}`);
+      const d = await r.json();
+      if (d.results) {
+        this.elevProfile = {};
+        d.results.forEach((e, i) => { this.elevProfile[`${coords[i][0]},${coords[i][1]}`] = e.elevation; });
+        S.altitude = d.results[0]?.elevation || 900;
+        this._updElev();
+      }
+    } catch(e) { this._simElev(coords); }
+  },
+
+  _simElev(coords) {
+    this.elevProfile = {};
+    let e = 900;
+    coords.forEach((c, i) => {
+      e += Math.sin(i * 0.5) * 40 + (Math.random() - 0.5) * 20;
+      e = Math.max(0, Math.min(2000, e));
+      this.elevProfile[`${c[0]},${c[1]}`] = e;
+    });
+    S.altitude = Object.values(this.elevProfile)[0] || 900;
+    this._updElev();
+  },
+
+  _updElev() {
+    document.getElementById('mapAltitude').textContent = Math.round(S.altitude) + 'm';
+    document.getElementById('elevVal').textContent = Math.round(S.altitude) + 'm';
+  },
+
+  updPos(lat, lng) {
+    S.pos = { lat, lng };
+    if (this.marker) this.marker.setLatLng([lat, lng]);
+    const keys = Object.keys(this.elevProfile);
+    if (keys.length > 0) {
+      let minD = Infinity, best = null;
+      for (const k of keys) {
+        const [kl, kg] = k.split(',').map(Number);
+        const d = Math.sqrt((kl - lat) ** 2 + (kg - lng) ** 2);
+        if (d < minD) { minD = d; best = this.elevProfile[k]; }
+      }
+      if (best !== null) { S.altitude = best; this._updElev(); }
+    }
+  },
+
+  getElev(lat, lng) {
+    const keys = Object.keys(this.elevProfile);
+    if (!keys.length) return 500;
+    let minD = Infinity, best = 500;
+    for (const k of keys) {
+      const [kl, kg] = k.split(',').map(Number);
+      const d = Math.sqrt((kl - lat) ** 2 + (kg - lng) ** 2);
+      if (d < minD) { minD = d; best = this.elevProfile[k]; }
+    }
+    return best;
+  },
+
+  _addMarkers() {
+    this.checkpoints = []; this.hazards = []; this.trafficLights = [];
+    for (const cp of this.checkpointData) {
+      const ic = L.divIcon({
+        html: '<div style="width:18px;height:18px;background:#ff2244;clip-path:polygon(50% 0%,100% 50%,50% 100%,0% 50%);opacity:.8;border:1px solid #fff"></div>',
+        iconSize: [18,18], iconAnchor: [9,9], className: ''
+      });
+      const m = L.marker([cp.lat, cp.lng], { icon: ic }).addTo(this.map);
+      m.bindTooltip(cp.name, { direction: 'top' });
+      this.checkpoints.push(m);
+    }
+    for (const h of this.hazardData) {
+      const colors = { landslide: '#ff8800', pothole: '#ffdd00', flood: '#00aaff' };
+      const ic = L.divIcon({
+        html: `<div style="width:14px;height:14px;background:${colors[h.type]||'#ff8800'};border-radius:2px;transform:rotate(45deg);opacity:.7;border:1px solid #fff"></div>`,
+        iconSize: [14,14], iconAnchor: [7,7], className: ''
+      });
+      const m = L.marker([h.lat, h.lng], { icon: ic }).addTo(this.map);
+      m.bindTooltip(h.name, { direction: 'top' });
+      this.hazards.push(m);
+    }
+    for (const tl of this.trafficLightData) {
+      const ic = L.divIcon({
+        html: '<div style="width:10px;height:10px;background:var(--yellow);border-radius:50%;opacity:.8;border:1px solid #fff;box-shadow:0 0 6px rgba(255,221,0,0.5)"></div>',
+        iconSize: [10,10], iconAnchor: [5,5], className: ''
+      });
+      const m = L.marker([tl.lat, tl.lng], { icon: ic }).addTo(this.map);
+      m.bindTooltip(tl.name, { direction: 'top' });
+      this.trafficLights.push(m);
+    }
+  },
+
+  _simTraffic() {
+    const pts = [
+      { lat: 10.3550, lng: -67.0200, level: 'heavy' },
+      { lat: 10.3900, lng: -66.9700, level: 'moderate' },
+      { lat: 10.4450, lng: -66.9100, level: 'light' },
+      { lat: 10.5000, lng: -66.9600, level: 'heavy' }
+    ];
+    const colors = { heavy: '#ff2244', moderate: '#ff8800', light: '#00ff88' };
+    for (const p of pts) {
+      L.circle([p.lat, p.lng], {
+        radius: 350, color: colors[p.level], fillColor: colors[p.level],
+        fillOpacity: 0.12, weight: 1, opacity: 0.35
+      }).addTo(this.map);
+    }
+  }
+};
+
+// ============================================================
+//  WEATHER
+// ============================================================
+const Weather = {
+  _conditions: [
+    { icon: '☀️', label: 'Despejado' },
+    { icon: '⛅', label: 'Parcial Nublado' },
+    { icon: '☁️', label: 'Nublado' },
+    { icon: '🌧️', label: 'Lluvia' },
+    { icon: '⛈️', label: 'Tormenta' },
+    { icon: '🌫️', label: 'Niebla' }
+  ],
+
+  update(altitude) {
+    const baseTemp = 28;
+    const altFactor = altitude / 100;
+    const temp = Math.round((baseTemp - altFactor * 1.8 + (Math.random() - 0.5) * 4) * 10) / 10;
+    const condIdx = altitude > 1500 ? 2 : altitude > 800 ? Math.floor(Math.random() * 3) : Math.floor(Math.random() * 4);
+    const cond = this._conditions[Math.min(condIdx, this._conditions.length - 1)];
+    S.weather = {
+      temp,
+      cond: cond.label,
+      icon: cond.icon,
+      alerts: cond.label === 'Lluvia' || cond.label === 'Tormenta' ? ['Clima adverso: reduce velocidad'] :
+              cond.label === 'Niebla' ? ['Niebla: mantén distancia'] : []
+    };
+    document.getElementById('weatherIcon').textContent = S.weather.icon;
+    document.getElementById('weatherTemp').textContent = temp + '°';
+    document.getElementById('weatherCond').textContent = S.weather.cond;
+  }
+};
+
+// ============================================================
+//  TRIP LOG (localStorage)
+// ============================================================
+const TripLog = {
+  _key: 'ecodriven_trips',
+
+  getTrips() {
+    try { return JSON.parse(localStorage.getItem(this._key)) || []; } catch(e) { return []; }
+  },
+
+  saveTrips(trips) {
+    try { localStorage.setItem(this._key, JSON.stringify(trips)); } catch(e) {}
+  },
+
+  startTrip() {
+    if (S.tripActive) return;
+    S.tripActive = true;
+    S.tripStart = Date.now();
+    S.dist = 0; S.burned = 0; S.eco = 100; S.optTime = 0; S.totalTime = 0;
+    S.rpmSum = 0; S.rpmCount = 0; S.maxSlope = 0; S.speedSum = 0; S.speedCount = 0;
+    S.alertsCount = 0;
+    document.getElementById('tripTimeDisplay').textContent = '00:00';
+  },
+
+  endTrip() {
+    if (!S.tripActive) return;
+    S.tripActive = false;
+    const elapsed = Date.now() - S.tripStart;
+    const trips = this.getTrips();
+    trips.unshift({
+      id: Date.now(),
+      date: new Date().toLocaleDateString('es-VE'),
+      time: new Date().toLocaleTimeString('es-VE', { hour: '2-digit', minute: '2-digit' }),
+      route: MapMgr.routes[S.route]?.label || S.route,
+      dist: Math.round(S.dist * 10) / 10,
+      fuel: Math.round(S.burned * 100) / 100,
+      eco: Math.round(S.eco),
+      avgSpeed: S.speedCount > 0 ? Math.round(S.speedSum / S.speedCount) : 0,
+      maxSlope: Math.round(S.maxSlope * 10) / 10,
+      avgRpm: S.rpmCount > 0 ? Math.round(S.rpmSum / S.rpmCount) : 0,
+      alerts: S.alertsCount,
+      duration: Math.round(elapsed / 1000),
+      parking: S.parked ? 1 : 0,
+      events: []
+    });
+    this.saveTrips(trips.slice(0, 50));
+  },
+
+  addAlert(type, title) {
+    S.alertsCount++;
+    if (!S.tripActive) return;
+    const trips = this.getTrips();
+    if (trips.length > 0) {
+      trips[0].events = trips[0].events || [];
+      trips[0].events.push({ time: new Date().toLocaleTimeString('es-VE'), type, title: title.slice(0, 40) });
+      this.saveTrips(trips);
+    }
+  },
+
+  openModal() {
+    const modal = document.getElementById('tripLogModal');
+    modal.classList.add('open');
+    this.render();
+  },
+
+  closeModal() {
+    document.getElementById('tripLogModal').classList.remove('open');
+  },
+
+  render() {
+    const body = document.getElementById('tripLogBody');
+    const trips = this.getTrips();
+    if (!trips.length) {
+      body.innerHTML = '<div class="empty">📭 No hay viajes registrados aún.<br><span style="font-size:10px;color:var(--text-dim)">Los viajes se guardan automáticamente al detener el vehículo.</span></div>';
+      return;
+    }
+    body.innerHTML = trips.map(t => `
+      <div class="trip-card">
+        <div class="trip-header">
+          <span class="trip-date">${t.date} · ${t.time}</span>
+          <span style="font-size:8px;color:var(--text-dim)">${t.route}</span>
+        </div>
+        <div class="trip-stats">
+          <span class="trip-stat"><strong>${t.dist} km</strong> distancia</span>
+          <span class="trip-stat"><strong>${t.fuel} L</strong> combustible</span>
+          <span class="trip-stat" style="color:${t.eco >= 80 ? 'var(--green)' : t.eco >= 50 ? 'var(--orange)' : 'var(--red)'}"><strong>${t.eco}%</strong> eco-score</span>
+          <span class="trip-stat"><strong>${t.avgSpeed} km/h</strong> vel prom</span>
+          <span class="trip-stat"><strong>${Math.floor(t.duration / 60)}m ${t.duration % 60}s</strong> duración</span>
+          <span class="trip-stat"><strong>${t.alerts}</strong> alertas</span>
+        </div>
+        ${t.events && t.events.length ? '<div class="trip-events">' + t.events.slice(-5).map(e => `<span>${e.time} ${e.title}</span>`).join('') + '</div>' : ''}
+      </div>
+    `).join('');
+  },
+
+  clear() {
+    if (confirm('¿Borrar toda la bitácora de viajes?')) {
+      this.saveTrips([]);
+      this.render();
+    }
+  }
+};
+
+// Close modal on overlay click
+document.addEventListener('click', (e) => {
+  if (e.target.classList.contains('modal-overlay')) TripLog.closeModal();
+});
+
+// ============================================================
+//  COPILOT UI
+// ============================================================
+const CopilotUI = {
+  _timers: [],
+
+  show(type, title, desc, duration = 4500) {
+    const el = document.createElement('div');
+    el.className = `copilot-alert ${type}`;
+    el.innerHTML = `<div class="icon">${this._icon(type)}</div><div class="body"><div class="title">${title}</div><div class="desc">${desc}</div></div>`;
+    document.getElementById('copilotOverlay').appendChild(el);
+    AudioMgr.alert();
+    if (type === 'critical') this._flash();
+    setTimeout(() => {
+      el.style.opacity = '0'; el.style.transition = 'opacity .3s';
+      setTimeout(() => el.remove(), 300);
+    }, duration);
+    // Keep max 3
+    const parent = document.getElementById('copilotOverlay');
+    while (parent.children.length > 3) parent.firstChild.remove();
+  },
+
+  _icon(type) {
+    return { warning: '⚠️', critical: '🚨', success: '✅', info: 'ℹ️', eco: '🌿', speed: '📢', traffic: '🚗', checkpoint: '🛑' }[type] || 'ℹ️';
+  },
+
+  _flash() {
+    const el = document.getElementById('flashOverlay');
+    el.classList.remove('active');
+    void el.offsetWidth;
+    el.classList.add('active');
+    setTimeout(() => el.classList.remove('active'), 400);
+  }
+};
+
+// ============================================================
+//  SIMULATION
+// ============================================================
+const Sim = {
+  _int: null, _tick: 0, _routeProg: 0, _aiTimer: null,
+  _parkCount: 0, _wasMoving: false, _lastAI: 0,
+  dt: 0.1,
+
+  start() {
+    if (this._int) return;
+    this._int = setInterval(() => this.tick(), 100);
+    S.running = true;
+    TripLog.startTrip();
+    this.aiLoop();
+    Weather.update(S.altitude);
+  },
+
+  stop() {
+    if (this._int) { clearInterval(this._int); this._int = null; }
+    S.running = false;
+    TripLog.endTrip();
+  },
+
+  tick() {
+    this._tick++;
+    const speed = S.speed, gear = S.gear, slope = S.slope, throttle = S.throttle;
+
+    // Auto-detect gear
+    const rpm = calcRPM(speed, gear);
+    S.rpm = rpm;
+    const detectedGear = detectGear(speed, rpm);
+    if (detectedGear > 0) S.gear = detectedGear;
+    S.gear = S.gear || 0;
+
+    // Speed prediction
+    S.speedHistory.push(speed);
+    if (S.speedHistory.length > 50) S.speedHistory.shift();
+    S.predictedSpeed = predictSpeed(S.speedHistory);
+
+    // Position
+    if (speed > 0 && S.route) {
+      const route = MapMgr.routes[S.route];
+      if (route) {
+        this._routeProg += (speed / 3600) * this.dt;
+        const total = route.coords.length;
+        const idx = Math.min(Math.floor(this._routeProg / 0.5), total - 1);
+        if (idx < total - 1) {
+          const c = route.coords[idx];
+          MapMgr.updPos(c[0], c[1]);
+          const e1 = MapMgr.getElev(c[0], c[1]);
+          const nidx = Math.min(idx + 1, total - 1);
+          const c2 = route.coords[nidx];
+          const e2 = MapMgr.getElev(c2[0], c2[1]);
+          const dist = haversine(c[0], c[1], c2[0], c2[1]);
+          const ed = e2 - e1;
+          S.slope = Math.max(-15, Math.min(15, dist > 0 ? (ed / (dist * 1000)) * 100 : slope));
+        }
+      }
+    }
+
+    // Parking detection
+    if (speed === 0 && S.running) {
+      this._parkCount += this.dt;
+      if (this._parkCount > 30 && !S.parked) { // parked for > 3s
+        S.parked = true;
+        S.parkTime = Date.now();
+      }
+    } else {
+      if (this._parkCount > 30 && S.parked) {
+        // Just left parking
+        S.parked = false;
+        this._parkCount = 0;
+        CopilotUI.show('success', 'Inicio de viaje', 'Saliendo de estacionamiento·Ruta registrada', 3000);
+        TripLog.startTrip();
+      }
+      this._parkCount = 0;
+      S.parked = false;
+    }
+
+    // Fuel
+    const eff = calcFuelRate(speed, gear, slope, throttle);
+    S.eff = isFinite(eff) ? eff : 0;
+    const tickCons = speed > 0 && isFinite(eff) && eff > 0 ? (speed / 3600) * this.dt / eff : 0;
+    if (!(speed > 20 && slope < -5 && throttle <= 5)) {
+      S.fuel = Math.max(0, S.fuel - tickCons);
+      S.burned += tickCons;
+    }
+
+    const distTick = (speed / 3600) * this.dt;
+    S.dist += distTick;
+
+    // Eco
+    S.eco = calcEco(speed, rpm, slope);
+    if (rpm >= 1800 && rpm <= 2400 && speed >= 55 && speed <= 70) S.optTime += this.dt;
+    S.totalTime += this.dt;
+    if (rpm > 0) { S.rpmSum += rpm; S.rpmCount++; }
+    if (speed > 0) { S.speedSum += speed; S.speedCount++; }
+    S.maxSlope = Math.max(S.maxSlope, Math.abs(slope));
+    S.range = S.fuel * (isFinite(eff) && eff > 0 ? eff : BASE_KPL);
+
+    // Weather (every 30 ticks)
+    if (this._tick % 30 === 0) Weather.update(S.altitude);
+
+    this._updateUI(speed, rpm, gear, slope, throttle);
+  },
+
+  _updateUI(speed, rpm, gear, slope, throttle) {
+    const sd = document.getElementById('speedDisplay');
+    sd.textContent = Math.round(speed);
+    sd.className = 'speed-value' + (speed > 75 ? ' warn' : '') + (speed > 120 ? ' alert' : '');
+
+    document.getElementById('rpmDisplay').textContent = Math.round(rpm);
+    document.getElementById('gearDisplay').textContent = gear > 0 ? gear : 'N';
+    document.getElementById('gearConfidence').textContent = gear > 0 ? `Marcha ${gear}` : 'Punto Muerto';
+    document.getElementById('predictedSpeedDisplay').textContent = Math.round(S.predictedSpeed);
+
+    // Fuel
+    const fl = document.getElementById('fuelLevelDisplay');
+    fl.textContent = S.fuel.toFixed(1);
+    fl.className = 'big' + (S.fuel < 10 ? ' red' : S.fuel < 23 ? ' orange' : ' green');
+    document.getElementById('fuelBarFill').style.width = `${(S.fuel / FUEL_CAP) * 100}%`;
+    document.getElementById('efficiencyDisplay').textContent = isFinite(S.eff) && S.eff > 0 ? S.eff.toFixed(1) : '∞';
+    document.getElementById('efficiencyDisplay').className = 'big' + (S.eff < 6 ? ' red' : ' green');
+    const rd = document.getElementById('rangeDisplay');
+    rd.textContent = Math.round(S.range);
+    rd.style.color = S.range < 50 ? 'var(--red)' : S.range < 100 ? 'var(--orange)' : 'var(--cyan)';
+
+    // Map badges
+    document.getElementById('mapSlope').textContent = slope.toFixed(1) + '%';
+    document.getElementById('mapEfficiency').textContent = isFinite(S.eff) ? S.eff.toFixed(1) : '∞';
+    document.getElementById('elevVal').textContent = Math.round(S.altitude) + 'm';
+    document.getElementById('slopeDisplay').textContent = slope.toFixed(1) + '%';
+    document.getElementById('slopeDisplay').className = 'val' + (slope > 5 ? ' up' : slope < -5 ? ' down' : '');
+    document.getElementById('terrainDisplay').textContent = slope > 5 ? '⬆ Subida' : slope < -5 ? '⬇ Bajada' : '➡ Llano';
+
+    // Telemetry
+    document.getElementById('tripDist').textContent = S.dist.toFixed(1) + ' km';
+    document.getElementById('tripFuel').textContent = S.burned.toFixed(2) + ' L';
+    document.getElementById('tripAvgRpm').textContent = S.rpmCount > 0 ? Math.round(S.rpmSum / S.rpmCount) : 0;
+    document.getElementById('tripAvgSpeed').textContent = S.speedCount > 0 ? Math.round(S.speedSum / S.speedCount) + ' km/h' : '0';
+    document.getElementById('tripMaxSlope').textContent = S.maxSlope.toFixed(1) + '%';
+    document.getElementById('tripAlerts').textContent = S.alertsCount;
+
+    // Eco
+    document.getElementById('ecoScoreDisplay').textContent = Math.round(S.eco);
+    document.getElementById('ecoScoreDisplay').style.color = S.eco >= 80 ? '#00ff88' : S.eco >= 50 ? '#ff8800' : '#ff2244';
+    document.getElementById('optTimeDisplay').textContent = Math.round(S.optTime);
+    document.getElementById('tripTimeDisplay').textContent = this._fmtTime(S.totalTime);
+    EcoRing.draw(S.eco);
+  },
+
+  _fmtTime(sec) {
+    const m = Math.floor(sec / 60), s = Math.floor(sec % 60);
+    return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  },
+
+  // AI async loop
+  async aiLoop() {
+    while (true) {
+      await new Promise(r => setTimeout(r, 2000 + Math.random() * 1000));
+      if (!S.running) continue;
+      try {
+        document.getElementById('aiStatus').textContent = '🧠 Pensando...';
+        const result = await AIPredictor.think({
+          speed: S.speed, rpm: S.rpm, gear: S.gear, slope: S.slope,
+          lat: S.pos.lat, lng: S.pos.lng, engineOn: S.speed > 0 || S.running,
+          parked: S.parked, weather: S.weather
+        });
+
+        // Build reasoning text
+        const lines = [];
+        if (result.trafficRisk) {
+          lines.push(`🚦 ${result.trafficRisk.msg}`);
+          this._maybeAlert(result.trafficRisk.level, 'Tráfico', result.trafficRisk.msg);
+        }
+        if (result.checkpointProximity) {
+          lines.push(`🛑 Alcabala cerca: ${result.checkpointProximity.name} a ${result.checkpointProximity.dist}m`);
+          CopilotUI.show('checkpoint', `🛑 ${result.checkpointProximity.name}`, `Retén a ${result.checkpointProximity.dist}m·Desacelera progresivamente`, 5000);
+          TripLog.addAlert('checkpoint', result.checkpointProximity.name);
+        }
+        if (result.trafficLightProximity) {
+          lines.push(`🚦 ${result.trafficLightProximity.name} a ${result.trafficLightProximity.dist}m`);
+          CopilotUI.show('info', `🚦 ${result.trafficLightProximity.name}`, `Semáforo a ${result.trafficLightProximity.dist}m·Velocidad recomendada: 30 km/h para Green Wave`, 4000);
+        }
+        if (result.accidentRisk) {
+          lines.push(`${result.accidentRisk.msg}`);
+          const lvl = result.accidentRisk.level;
+          CopilotUI.show(lvl, lvl === 'critical' ? '🚨 Riesgo de Accidente' : '⚠️ Precaución', result.accidentRisk.msg, 6000);
+          TripLog.addAlert(lvl === 'critical' ? 'accidente' : 'precaucion', result.accidentRisk.msg);
+          if (lvl === 'critical') AudioMgr.warn();
+        }
+        if (result.optimalAdvice) {
+          lines.push(`💡 ${result.optimalAdvice.msg}`);
+          const map = { eco: 'success', speed: 'speed', success: 'success' };
+          CopilotUI.show(map[result.optimalAdvice.type] || 'info', '💡 Consejo Eco', result.optimalAdvice.msg, 4000);
+        }
+        if (result.weatherImpact) {
+          lines.push(`🌤️ ${result.weatherImpact.msg}`);
+          CopilotUI.show('warning', '🌤️ Alerta Climática', result.weatherImpact.msg, 5000);
+        }
+        if (result.parkingDetected) {
+          lines.push(`🅿️ ${result.parkingDetected.msg}`);
+          TripLog.endTrip();
+        }
+
+        document.getElementById('aiReasoning').textContent = lines.length > 0 ? lines.join(' · ') : '✅ Ruta despejada·Conducción estable';
+        document.getElementById('aiStatus').textContent = '🤖 IA Activa';
+      } catch(e) {
+        document.getElementById('aiStatus').textContent = '⚠️ IA Error';
+        document.getElementById('aiReasoning').textContent = 'Reconectando...';
+      }
+    }
+  },
+
+  _maybeAlert(level, title, msg) {
+    if (level === 'warning') CopilotUI.show('warning', `⚠️ ${title}`, msg, 4500);
+    else if (level === 'critical') CopilotUI.show('critical', `🚨 ${title}`, msg, 6000);
+    else if (level === 'info') CopilotUI.show('info', `ℹ️ ${title}`, msg, 3000);
+  }
+};
+
+// ============================================================
+//  UI BINDING
+// ============================================================
+function initUI() {
+  const ss = document.getElementById('speedSlider');
+  ss.addEventListener('input', () => {
+    S.speed = parseFloat(ss.value);
+    document.getElementById('speedVal').textContent = Math.round(S.speed);
+  });
+  const sls = document.getElementById('slopeSlider');
+  sls.addEventListener('input', () => {
+    S.slope = parseFloat(sls.value);
+    document.getElementById('slopeVal').textContent = S.slope.toFixed(1) + '%';
+  });
+  const ts = document.getElementById('throttleSlider');
+  ts.addEventListener('input', () => {
+    S.throttle = parseFloat(ts.value);
+    document.getElementById('throttleVal').textContent = Math.round(S.throttle) + '%';
+  });
+  document.getElementById('fuelSetBtn').addEventListener('click', () => {
+    const v = parseFloat(document.getElementById('fuelInput').value);
+    if (!isNaN(v) && v >= 0 && v <= FUEL_CAP) S.fuel = v;
+  });
+  document.getElementById('routeSelect').addEventListener('change', (e) => {
+    MapMgr.init(e.target.value);
+    Sim._routeProg = 0;
+  });
+  setInterval(() => {
+    document.getElementById('clockDisplay').textContent = new Date().toLocaleTimeString('es-VE', { hour: '2-digit', minute: '2-digit', hour12: false });
+  }, 10000);
+  document.getElementById('clockDisplay').textContent = new Date().toLocaleTimeString('es-VE', { hour: '2-digit', minute: '2-digit', hour12: false });
+}
+
+// ============================================================
+//  INIT
+// ============================================================
+function init() {
+  AudioMgr.init();
+  EcoRing.init();
+  MapMgr.init('teques-caracas');
+  initUI();
+  Weather.update(900);
+  let rt;
+  window.addEventListener('resize', () => {
+    clearTimeout(rt);
+    rt = setTimeout(() => { EcoRing.resize(); }, 200);
+  });
+  Sim.start();
+}
+
+document.addEventListener('DOMContentLoaded', init);
+</script>
+</body>
+</html>
