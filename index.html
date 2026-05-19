@@ -429,21 +429,15 @@ body{
       </div>
     </div>
 
-    <!-- Controls -->
-    <div class="controls-bar">
-      <label>Vel</label>
-      <input type="range" id="speedSlider" min="0" max="160" value="0" step="1">
-      <span class="cv" id="speedVal">0</span>
+    <!-- Driving Mode & Auto Status -->
+    <div class="controls-bar" style="border-top:1px solid var(--border);padding-top:6px;margin-top:2px">
+      <label>Modo</label>
+      <span style="font-family:var(--font-display);font-size:11px;color:var(--green);flex:1;text-align:center;letter-spacing:1px" id="drivingModeDisplay">🌿 ECO</span>
+      <span class="cv" style="font-size:9px;color:var(--text-dim)" id="drivingModeDetail">Automático</span>
     </div>
     <div class="controls-bar">
-      <label>Pen</label>
-      <input type="range" id="slopeSlider" min="-15" max="15" value="0" step="0.5">
-      <span class="cv" id="slopeVal">0%</span>
-    </div>
-    <div class="controls-bar">
-      <label>Acel</label>
-      <input type="range" id="throttleSlider" min="0" max="100" value="30" step="1">
-      <span class="cv" id="throttleVal">30%</span>
+      <label>Auto</label>
+      <span style="font-size:9px;color:var(--text-dim);flex:1" id="autoStatusText">Cargando...</span>
     </div>
 
     <!-- Eco score -->
@@ -709,11 +703,11 @@ if ('speechSynthesis' in window) {
 const S = {
   speed: 0, rpm: 0, gear: 0, throttle: 30,
   slope: 0, altitude: 0,
-  fuel: 46, dist: 0, burned: 0,
+  fuel: 0, dist: 0, burned: 0, // fuel loaded from localStorage
   eco: 100, optTime: 0, totalTime: 0,
   rpmSum: 0, rpmCount: 0, maxSlope: 0,
   speedSum: 0, speedCount: 0, alertsCount: 0,
-  eff: BASE_KPL, range: 575,
+  eff: BASE_KPL, range: 0,
   pos: { lat: 10.4806, lng: -66.9036 },
   route: 'teques-caracas', running: false,
   predictedSpeed: 0,
@@ -1520,6 +1514,7 @@ const Telemetry = {
 const Sim = {
   _int: null, _tick: 0, _routeProg: 0, _aiTimer: null,
   _parkCount: 0, _wasMoving: false, _lastAI: 0, _lastHazardWarn: {},
+  _drivingMode: { label: '🌿 ECO', color: 'var(--green)', target: 0 },
   dt: 0.1,
 
   start() {
@@ -1547,6 +1542,14 @@ const Sim = {
     if (Telemetry.isGPSMode) {
       speed = Telemetry.realSpeed;
       S.speed = speed;
+    }
+
+    // Auto-driving (SIM mode) — replaces manual sliders
+    if (!Telemetry.isGPSMode) {
+      const auto = this._autoDrive(speed, S.slope);
+      S.speed = auto.speed;
+      S.throttle = auto.throttle;
+      speed = S.speed;
     }
 
     // Auto-detect gear
@@ -1649,7 +1652,86 @@ const Sim = {
     // Weather (every 30 ticks)
     if (this._tick % 30 === 0) Weather.update(S.altitude);
 
+    // Persist fuel to localStorage (every 30 ticks to avoid excessive writes)
+    if (this._tick % 30 === 0) {
+      try { localStorage.setItem('ecodriven_fuel', JSON.stringify({ fuel: S.fuel, savedAt: Date.now() })); } catch(e) {}
+    }
+
     this._updateUI(speed, rpm, gear, slope, throttle);
+  },
+
+  // Auto-driving engine: determines speed, throttle, and driving mode from route conditions
+  _autoDrive(currentSpeed, currentSlope) {
+    const optR = optimalRPMRange(currentSlope);
+    const optS = optimalSpeedRange(currentSlope);
+
+    // Target speed based on terrain
+    let targetSpeed;
+    let drivingMode, modeColor;
+
+    if (currentSlope > 8) {
+      targetSpeed = 55;
+      drivingMode = '⬆ SUBIDA';
+      modeColor = 'var(--orange)';
+    } else if (currentSlope > 4) {
+      targetSpeed = 60;
+      drivingMode = '⬆ SUBIDA SUAVE';
+      modeColor = 'var(--orange)';
+    } else if (currentSlope < -8) {
+      targetSpeed = 65;
+      drivingMode = '⬇ DESCENSO';
+      modeColor = 'var(--cyan)';
+    } else if (currentSlope < -4) {
+      targetSpeed = 70;
+      drivingMode = '⬇ BAJADA SUAVE';
+      modeColor = 'var(--cyan)';
+    } else {
+      targetSpeed = 65;
+      drivingMode = '🌿 ECO CRUCERO';
+      modeColor = 'var(--green)';
+    }
+
+    // Reduce speed if traffic is near
+    const trafficRes = AIPredictor._calcTrafficRisk({
+      speed: currentSpeed, lat: S.pos.lat, lng: S.pos.lng, routeId: S.route
+    });
+    if (trafficRes && trafficRes.risk === 'alta') {
+      targetSpeed = Math.min(targetSpeed, 20);
+      drivingMode = '🚗 TRÁFICO DENSO';
+      modeColor = 'var(--red)';
+    } else if (trafficRes && trafficRes.risk === 'media') {
+      targetSpeed = Math.min(targetSpeed, 40);
+      drivingMode = '🚗 TRÁFICO MODERADO';
+      modeColor = 'var(--orange)';
+    }
+
+    // When parked or stopped, target 0
+    if (S.parked || currentSpeed < 0.5) {
+      targetSpeed = 0;
+      drivingMode = '🅿️ DETENIDO';
+      modeColor = 'var(--text-dim)';
+    }
+
+    // Gradual acceleration/deceleration
+    const accelRate = 0.4; // km/h per tick (100ms)
+    let newSpeed;
+    if (currentSpeed < targetSpeed) {
+      newSpeed = Math.min(currentSpeed + accelRate, targetSpeed);
+    } else if (currentSpeed > targetSpeed) {
+      newSpeed = Math.max(currentSpeed - accelRate * 1.2, targetSpeed);
+    } else {
+      newSpeed = targetSpeed;
+    }
+    newSpeed = Math.max(0, Math.min(MAX_SPEED, newSpeed));
+
+    // Throttle based on load
+    const load = (currentSlope > 0 ? 1 + currentSlope * 0.03 : Math.max(0.1, 1 + currentSlope * 0.02));
+    const throttle = Math.min(100, Math.round(20 + (newSpeed / MAX_SPEED) * 40 * load));
+
+    // Store driving mode for display
+    this._drivingMode = { label: drivingMode, color: modeColor, target: Math.round(targetSpeed) };
+
+    return { speed: Math.round(newSpeed * 10) / 10, throttle };
   },
 
   _updateUI(speed, rpm, gear, slope, throttle) {
@@ -1662,6 +1744,16 @@ const Sim = {
     document.getElementById('gearDisplay').textContent = isWalking ? '🚶' : (gear > 0 ? gear : 'N');
     document.getElementById('gearConfidence').textContent = isWalking ? 'Caminando' : (gear > 0 ? `Marcha ${gear}` : 'Punto Muerto');
     document.getElementById('predictedSpeedDisplay').textContent = isWalking ? '—' : Math.round(S.predictedSpeed);
+
+    // Driving mode display
+    if (this._drivingMode) {
+      document.getElementById('drivingModeDisplay').textContent = this._drivingMode.label;
+      document.getElementById('drivingModeDisplay').style.color = this._drivingMode.color;
+      document.getElementById('drivingModeDetail').textContent = `Obj ${this._drivingMode.target} km/h · Auto`;
+    }
+    document.getElementById('autoStatusText').textContent = Telemetry.isGPSMode
+      ? '🛰️ GPS real · Modo autónomo'
+      : `🤖 Auto-piloto · ${this._drivingMode.label}`;
 
     // Fuel
     if (!isWalking) {
@@ -1816,24 +1908,13 @@ const Sim = {
 //  UI BINDING
 // ============================================================
 function initUI() {
-  const ss = document.getElementById('speedSlider');
-  ss.addEventListener('input', () => {
-    S.speed = parseFloat(ss.value);
-    document.getElementById('speedVal').textContent = Math.round(S.speed);
-  });
-  const sls = document.getElementById('slopeSlider');
-  sls.addEventListener('input', () => {
-    S.slope = parseFloat(sls.value);
-    document.getElementById('slopeVal').textContent = S.slope.toFixed(1) + '%';
-  });
-  const ts = document.getElementById('throttleSlider');
-  ts.addEventListener('input', () => {
-    S.throttle = parseFloat(ts.value);
-    document.getElementById('throttleVal').textContent = Math.round(S.throttle) + '%';
-  });
+  // Fuel set button
   document.getElementById('fuelSetBtn').addEventListener('click', () => {
     const v = parseFloat(document.getElementById('fuelInput').value);
-    if (!isNaN(v) && v >= 0 && v <= FUEL_CAP) S.fuel = v;
+    if (!isNaN(v) && v >= 0 && v <= FUEL_CAP) {
+      S.fuel = v;
+      FuelPersist.save(v);
+    }
   });
   // Fuel preset buttons
   document.querySelectorAll('.fuel-preset button').forEach(btn => {
@@ -1842,6 +1923,7 @@ function initUI() {
       if (!isNaN(v) && v >= 0 && v <= FUEL_CAP) {
         S.fuel = v;
         document.getElementById('fuelInput').value = v;
+        FuelPersist.save(v);
       }
     });
   });
@@ -1873,6 +1955,57 @@ function initUI() {
 }
 
 // ============================================================
+//  FUEL PERSISTENCE (localStorage)
+// ============================================================
+const FuelPersist = {
+  _key: 'ecodriven_fuel',
+  load() {
+    try {
+      const d = JSON.parse(localStorage.getItem(this._key));
+      if (d && typeof d.fuel === 'number' && d.fuel >= 0 && d.fuel <= FUEL_CAP) {
+        S.fuel = d.fuel;
+        S.range = S.fuel * BASE_KPL;
+        document.getElementById('fuelInput').value = d.fuel;
+        return d.fuel;
+      }
+    } catch(e) {}
+    S.fuel = FUEL_CAP;
+    document.getElementById('fuelInput').value = FUEL_CAP;
+    return FUEL_CAP;
+  },
+  save(v) {
+    try { localStorage.setItem(this._key, JSON.stringify({ fuel: v, savedAt: Date.now() })); } catch(e) {}
+  }
+};
+
+// ============================================================
+//  SCREEN WAKE LOCK
+// ============================================================
+const WakeLock = {
+  _lock: null,
+  async request() {
+    try {
+      if ('wakeLock' in navigator) {
+        this._lock = await navigator.wakeLock.request('screen');
+        this._lock.addEventListener('release', () => {
+          if (S.running) setTimeout(() => this.request(), 1000);
+        });
+      }
+    } catch(e) {
+      // Wake lock not supported or denied — silent
+    }
+  },
+  async release() {
+    if (this._lock) { try { await this._lock.release(); } catch(e) {} this._lock = null; }
+  }
+};
+
+// Re-acquire wake lock on visibility change
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && S.running) WakeLock.request();
+});
+
+// ============================================================
 //  INIT
 // ============================================================
 function init() {
@@ -1881,6 +2014,7 @@ function init() {
     navigator.serviceWorker.register('/odometro/sw.js').catch(() => {});
   }
 
+  FuelPersist.load(); // Load persisted fuel level
   AudioMgr.init();
   EcoRing.init();
   MapMgr.init('teques-caracas');
@@ -1891,6 +2025,7 @@ function init() {
     clearTimeout(rt);
     rt = setTimeout(() => { EcoRing.resize(); }, 200);
   });
+  WakeLock.request();
   Sim.start();
 }
 
