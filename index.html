@@ -393,6 +393,7 @@ body{
 .settings-fuel-row input[type=number]{flex:1;background:var(--bg);border:1px solid var(--border);color:var(--cyan);font-family:var(--font-display);font-size:16px;text-align:center;padding:6px;border-radius:4px}
 .settings-fuel-row button{padding:6px 14px;background:var(--cyan);border:none;color:#000;font-family:var(--font-display);font-size:11px;font-weight:700;border-radius:4px;cursor:pointer}
 .settings-fuel-row button:hover{opacity:.85}
+.settings-row select option{background:var(--bg);color:var(--text)}
 </style>
 </head>
 <body>
@@ -621,6 +622,25 @@ body{
         </div>
       </div>
 
+      <div class="settings-section">
+        <h3>🚗 Vehículo</h3>
+        <div class="settings-row">
+          <label>Marca</label>
+          <select id="vehicleMakeSelect" style="flex:1;background:var(--bg);border:1px solid var(--border);color:var(--text);font-family:var(--font);font-size:11px;padding:4px 6px;border-radius:4px"></select>
+        </div>
+        <div class="settings-row">
+          <label>Modelo</label>
+          <select id="vehicleModelSelect" style="flex:1;background:var(--bg);border:1px solid var(--border);color:var(--text);font-family:var(--font);font-size:11px;padding:4px 6px;border-radius:4px"></select>
+        </div>
+        <div class="settings-row">
+          <label>Año</label>
+          <select id="vehicleYearSelect" style="flex:1;background:var(--bg);border:1px solid var(--border);color:var(--text);font-family:var(--font);font-size:11px;padding:4px 6px;border-radius:4px"></select>
+        </div>
+        <div style="font-size:10px;color:var(--text-dim);margin-top:4px" id="vehicleSpecsDisplay">
+          Capacidad: 46 L · Rendimiento: 12.5 km/L
+        </div>
+      </div>
+
     </div>
   </div>
 </div>
@@ -631,17 +651,276 @@ body{
 // ============================================================
 //  CONSTANTS
 // ============================================================
-const GEAR_RATIOS = [0, 3.73, 2.14, 1.41, 1.12, 0.89];
-const FINAL_DRIVE = 3.72;
-const WHEEL_CIRC = 1.807;
-const FUEL_CAP = 46;
-const BASE_KPL = 12.5;
+let GEAR_RATIOS = [0, 3.73, 2.14, 1.41, 1.12, 0.89];
+let FINAL_DRIVE = 3.72;
+let WHEEL_CIRC = 1.807;
+let FUEL_CAP = 46;
+let BASE_KPL = 12.5;
 const REDLINE = 6000;
 const MAX_SPEED = 160;
 const CHECKPOINT_RADIUS = 500;
 
 // ============================================================
-//  AUDIO
+//  VEHICLE DATABASE
+// ============================================================
+const VEHICLES = {
+  'chevrolet': {
+    label: 'Chevrolet',
+    models: {
+      'corsa-14': {
+        label: 'Corsa 1.4', years: {
+          '1998-2005': { fuelCap: 46, baseKpl: 12.5, gears: [0, 3.73, 2.14, 1.41, 1.12, 0.89], finalDrive: 3.72, wheelCirc: 1.807, redline: 6000 }
+        }
+      },
+      'corsa-16': {
+        label: 'Corsa 1.6', years: {
+          '2002-2008': { fuelCap: 45, baseKpl: 11.5, gears: [0, 3.55, 2.05, 1.35, 1.08, 0.85], finalDrive: 3.72, wheelCirc: 1.807, redline: 6200 }
+        }
+      },
+      'aveo-14': {
+        label: 'Aveo 1.4', years: {
+          '2005-2014': { fuelCap: 42, baseKpl: 13.0, gears: [0, 3.73, 2.14, 1.41, 1.12, 0.89], finalDrive: 3.72, wheelCirc: 1.827, redline: 6000 }
+        }
+      },
+      'aveo-16': {
+        label: 'Aveo 1.6', years: {
+          '2007-2014': { fuelCap: 42, baseKpl: 12.0, gears: [0, 3.55, 2.05, 1.35, 1.08, 0.85], finalDrive: 3.72, wheelCirc: 1.827, redline: 6200 }
+        }
+      },
+      'spark-10': {
+        label: 'Spark 1.0', years: {
+          '2005-2015': { fuelCap: 35, baseKpl: 15.0, gears: [0, 3.82, 2.16, 1.48, 1.12, 0.89], finalDrive: 4.12, wheelCirc: 1.765, redline: 6000 }
+        }
+      },
+      'onix-14': {
+        label: 'Onix 1.4', years: {
+          '2012-2025': { fuelCap: 44, baseKpl: 13.5, gears: [0, 3.73, 2.14, 1.41, 1.12, 0.89], finalDrive: 3.72, wheelCirc: 1.827, redline: 6200 }
+        }
+      },
+      'malibu-24': {
+        label: 'Malibu 2.4', years: {
+          '2010-2018': { fuelCap: 62, baseKpl: 9.0, gears: [0, 3.50, 2.00, 1.38, 1.05, 0.82], finalDrive: 3.45, wheelCirc: 1.957, redline: 6500 }
+        }
+      },
+      'blazer-43': {
+        label: 'Blazer 4.3', years: {
+          '1995-2005': { fuelCap: 72, baseKpl: 6.5, gears: [0, 3.06, 1.78, 1.28, 1.00, 0.78], finalDrive: 3.73, wheelCirc: 2.084, redline: 5500 }
+        }
+      }
+    }
+  },
+  'ford': {
+    label: 'Ford', models: {
+      'fiesta-16': {
+        label: 'Fiesta 1.6', years: {
+          '2000-2010': { fuelCap: 45, baseKpl: 11.0, gears: [0, 3.58, 2.05, 1.38, 1.08, 0.85], finalDrive: 3.82, wheelCirc: 1.827, redline: 6200 }
+        }
+      },
+      'focus-20': {
+        label: 'Focus 2.0', years: {
+          '2005-2015': { fuelCap: 55, baseKpl: 9.5, gears: [0, 3.42, 2.00, 1.35, 1.05, 0.82], finalDrive: 3.55, wheelCirc: 1.957, redline: 6500 }
+        }
+      },
+      'explorer-40': {
+        label: 'Explorer 4.0', years: {
+          '1995-2010': { fuelCap: 85, baseKpl: 5.5, gears: [0, 2.90, 1.70, 1.25, 1.00, 0.78], finalDrive: 3.55, wheelCirc: 2.084, redline: 5500 }
+        }
+      }
+    }
+  },
+  'toyota': {
+    label: 'Toyota', models: {
+      'corolla-18': {
+        label: 'Corolla 1.8', years: {
+          '2000-2015': { fuelCap: 55, baseKpl: 12.0, gears: [0, 3.55, 2.05, 1.38, 1.08, 0.85], finalDrive: 3.72, wheelCirc: 1.877, redline: 6200 }
+        }
+      },
+      'yaris-15': {
+        label: 'Yaris 1.5', years: {
+          '2005-2025': { fuelCap: 42, baseKpl: 14.0, gears: [0, 3.73, 2.14, 1.41, 1.12, 0.89], finalDrive: 3.72, wheelCirc: 1.827, redline: 6200 }
+        }
+      },
+      'hilux-25': {
+        label: 'Hilux 2.5', years: {
+          '2005-2025': { fuelCap: 80, baseKpl: 9.5, gears: [0, 3.52, 2.04, 1.37, 1.05, 0.83], finalDrive: 4.10, wheelCirc: 2.062, redline: 5500 }
+        }
+      }
+    }
+  },
+  'volkswagen': {
+    label: 'Volkswagen', models: {
+      'gol-16': {
+        label: 'Gol 1.6', years: {
+          '2000-2015': { fuelCap: 42, baseKpl: 12.0, gears: [0, 3.60, 2.08, 1.40, 1.09, 0.86], finalDrive: 3.82, wheelCirc: 1.807, redline: 6200 }
+        }
+      },
+      'jetta-20': {
+        label: 'Jetta 2.0', years: {
+          '2000-2015': { fuelCap: 55, baseKpl: 10.0, gears: [0, 3.42, 2.00, 1.35, 1.05, 0.82], finalDrive: 3.55, wheelCirc: 1.877, redline: 6500 }
+        }
+      }
+    }
+  },
+  'fiat': {
+    label: 'Fiat', models: {
+      'palio-13': {
+        label: 'Palio 1.3', years: {
+          '2000-2010': { fuelCap: 42, baseKpl: 12.5, gears: [0, 3.73, 2.14, 1.41, 1.12, 0.89], finalDrive: 3.72, wheelCirc: 1.807, redline: 6000 }
+        }
+      },
+      'siena-14': {
+        label: 'Siena 1.4', years: {
+          '2000-2010': { fuelCap: 42, baseKpl: 12.0, gears: [0, 3.73, 2.14, 1.41, 1.12, 0.89], finalDrive: 3.72, wheelCirc: 1.807, redline: 6000 }
+        }
+      }
+    }
+  },
+  'hyundai': {
+    label: 'Hyundai', models: {
+      'accent-15': {
+        label: 'Accent 1.5', years: {
+          '2000-2015': { fuelCap: 45, baseKpl: 12.5, gears: [0, 3.73, 2.14, 1.41, 1.12, 0.89], finalDrive: 3.72, wheelCirc: 1.827, redline: 6000 }
+        }
+      },
+      'tucson-20': {
+        label: 'Tucson 2.0', years: {
+          '2005-2025': { fuelCap: 58, baseKpl: 9.0, gears: [0, 3.42, 2.00, 1.35, 1.05, 0.82], finalDrive: 3.55, wheelCirc: 1.957, redline: 6200 }
+        }
+      }
+    }
+  },
+  'nissan': {
+    label: 'Nissan', models: {
+      'sentra-18': {
+        label: 'Sentra 1.8', years: {
+          '2000-2015': { fuelCap: 50, baseKpl: 11.5, gears: [0, 3.55, 2.05, 1.38, 1.08, 0.85], finalDrive: 3.72, wheelCirc: 1.877, redline: 6200 }
+        }
+      },
+      'frontier-25': {
+        label: 'Frontier 2.5', years: {
+          '2005-2025': { fuelCap: 75, baseKpl: 9.0, gears: [0, 3.52, 2.04, 1.37, 1.05, 0.83], finalDrive: 4.10, wheelCirc: 2.062, redline: 5500 }
+        }
+      }
+    }
+  },
+  'mitsubishi': {
+    label: 'Mitsubishi', models: {
+      'lancer-16': {
+        label: 'Lancer 1.6', years: {
+          '2005-2015': { fuelCap: 50, baseKpl: 11.0, gears: [0, 3.55, 2.05, 1.38, 1.08, 0.85], finalDrive: 3.72, wheelCirc: 1.877, redline: 6200 }
+        }
+      },
+      'montero-30': {
+        label: 'Montero 3.0', years: {
+          '2000-2015': { fuelCap: 80, baseKpl: 6.5, gears: [0, 3.52, 2.04, 1.37, 1.05, 0.83], finalDrive: 4.30, wheelCirc: 2.084, redline: 5500 }
+        }
+      }
+    }
+  },
+  'mazda': {
+    label: 'Mazda', models: {
+      'mazda3-20': {
+        label: 'Mazda 3 2.0', years: {
+          '2005-2015': { fuelCap: 55, baseKpl: 10.5, gears: [0, 3.42, 2.00, 1.35, 1.05, 0.82], finalDrive: 3.55, wheelCirc: 1.877, redline: 6500 }
+        }
+      }
+    }
+  }
+};
+
+const VehicleMgr = {
+  _current: null,
+  _key: 'ecodriven_vehicle',
+
+  get current() {
+    if (!this._current) this._current = { make: 'chevrolet', model: 'corsa-14', year: '1998-2005' };
+    return this._current;
+  },
+
+  getSpecs() {
+    const c = this.current;
+    const make = VEHICLES[c.make];
+    if (!make) return null;
+    const model = make.models[c.model];
+    if (!model) return null;
+    const year = model.years[c.year];
+    return year || null;
+  },
+
+  apply(make, model, year) {
+    this._current = { make, model, year };
+    const specs = this.getSpecs();
+    if (!specs) return;
+    FUEL_CAP = specs.fuelCap;
+    BASE_KPL = specs.baseKpl;
+    GEAR_RATIOS = specs.gears;
+    FINAL_DRIVE = specs.finalDrive;
+    WHEEL_CIRC = specs.wheelCirc;
+    // Cap fuel at new tank capacity
+    if (S.fuel > FUEL_CAP) S.fuel = FUEL_CAP;
+    S.range = S.fuel * BASE_KPL;
+    try { localStorage.setItem(this._key, JSON.stringify(this._current)); } catch(e) {}
+    // Refresh UI
+    document.getElementById('fuelInput').max = FUEL_CAP;
+    document.getElementById('fuelInput').value = Math.min(S.fuel, FUEL_CAP);
+    document.getElementById('settingsFuelInput').max = FUEL_CAP;
+    document.getElementById('settingsFuelInput').value = Math.min(S.fuel, FUEL_CAP);
+    document.getElementById('fuelLevelDisplay').textContent = S.fuel.toFixed(1);
+    document.getElementById('fuelBarFill').style.width = `${(S.fuel / FUEL_CAP) * 100}%`;
+    document.getElementById('rangeDisplay').textContent = Math.round(S.range);
+  },
+
+  load() {
+    try {
+      const d = JSON.parse(localStorage.getItem(this._key));
+      if (d && d.make && d.model && d.year) {
+        this.apply(d.make, d.model, d.year);
+      }
+    } catch(e) {}
+  },
+
+  getLabel() {
+    const c = this.current;
+    const make = VEHICLES[c.make];
+    if (!make) return 'Chevrolet Corsa 1.4';
+    const model = make.models[c.model];
+    if (!model) return make.label;
+    return `${make.label} ${model.label} (${c.year})`;
+  },
+
+  populateSelectors() {
+    const makeSel = document.getElementById('vehicleMakeSelect');
+    const modelSel = document.getElementById('vehicleModelSelect');
+    const yearSel = document.getElementById('vehicleYearSelect');
+    const cur = this.current;
+
+    // Populate makes
+    makeSel.innerHTML = Object.keys(VEHICLES).map(k =>
+      `<option value="${k}"${k === cur.make ? ' selected' : ''}>${VEHICLES[k].label}</option>`
+    ).join('');
+
+    // Populate models for current make
+    const models = VEHICLES[cur.make].models;
+    modelSel.innerHTML = Object.keys(models).map(k =>
+      `<option value="${k}"${k === cur.model ? ' selected' : ''}>${models[k].label}</option>`
+    ).join('');
+
+    // Populate years for current model
+    const years = models[cur.model].years;
+    yearSel.innerHTML = Object.keys(years).map(k =>
+      `<option value="${k}"${k === cur.year ? ' selected' : ''}>${k}</option>`
+    ).join('');
+
+    this._updateSpecsDisplay();
+  },
+
+  _updateSpecsDisplay() {
+    const specs = this.getSpecs();
+    if (!specs) return;
+    document.getElementById('vehicleSpecsDisplay').textContent =
+      `Capacidad: ${specs.fuelCap} L · Rendimiento: ${specs.baseKpl} km/L · ${specs.gears.length - 1} velocidades`;
+  }
+};
 // ============================================================
 const AudioMgr = {
   ctx: null, _beepMuted: false,
@@ -847,6 +1126,7 @@ const Settings = {
     document.getElementById('settingsFuelInput').value = S.fuel;
     document.getElementById('speedLimitRange').value = S.settings.speedLimit;
     document.getElementById('speedLimitDisplay').textContent = S.settings.speedLimit;
+    VehicleMgr.populateSelectors();
   },
 
   _applySpeedLimit(val) {
@@ -2393,6 +2673,27 @@ function initUI() {
       Settings.setFuel(parseFloat(b.dataset.fuel));
     });
   });
+  // Vehicle make/model/year selectors
+  document.getElementById('vehicleMakeSelect').addEventListener('change', (e) => {
+    const make = e.target.value;
+    const models = VEHICLES[make].models;
+    const firstModel = Object.keys(models)[0];
+    const firstYear = Object.keys(models[firstModel].years)[0];
+    VehicleMgr.apply(make, firstModel, firstYear);
+    VehicleMgr.populateSelectors();
+  });
+  document.getElementById('vehicleModelSelect').addEventListener('change', (e) => {
+    const model = e.target.value;
+    const models = VEHICLES[VehicleMgr.current.make].models;
+    const firstYear = Object.keys(models[model].years)[0];
+    VehicleMgr.apply(VehicleMgr.current.make, model, firstYear);
+    VehicleMgr.populateSelectors();
+  });
+  document.getElementById('vehicleYearSelect').addEventListener('change', (e) => {
+    const year = e.target.value;
+    VehicleMgr.apply(VehicleMgr.current.make, VehicleMgr.current.model, year);
+    VehicleMgr.populateSelectors();
+  });
   setInterval(() => {
     document.getElementById('clockDisplay').textContent = new Date().toLocaleTimeString('es-VE', { hour: '2-digit', minute: '2-digit', hour12: false });
   }, 10000);
@@ -2461,6 +2762,7 @@ function init() {
 
   FuelPersist.load(); // Load persisted fuel level
   Settings.load(); // Load persisted settings (speed limit)
+  VehicleMgr.load(); // Load persisted vehicle selection
   AudioMgr.init();
   EcoRing.init();
   MapMgr.init('teques-caracas');
