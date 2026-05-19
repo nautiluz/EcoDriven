@@ -652,7 +652,7 @@ const Voice = {
     this._speaking = false;
   },
 
-  announceTraffic(level, detail) {
+  announceTraffic(level, detail, loc) {
     const msgs = {
       alta: `Atención, tráfico pesado en la vía. ${detail}`,
       media: `Tráfico moderado. ${detail}`,
@@ -661,16 +661,26 @@ const Voice = {
     this.sayUnique('traffic', msgs[level] || detail, 15000);
   },
 
-  announceCheckpoint(name, dist) {
-    this.sayUnique(`cp_${name}`, `Alcabala detectada. ${name} a ${dist} metros. Reduzca velocidad.`, 30000);
+  announceCheckpoint(name, dist, road, km) {
+    const roadPart = road ? `en ${road}` : '';
+    const kmPart = km ? `kilómetro ${km}` : '';
+    this.sayUnique(`cp_${name}`, `Alcabala detectada. ${name} ${roadPart}, ${kmPart}, a ${dist} metros. Reduzca velocidad.`, 30000);
   },
 
-  announceTrafficLight(name, dist) {
-    this.sayUnique(`tl_${name}`, `Semáforo próximo. ${name} a ${dist} metros.`, 20000);
+  announceTrafficLight(name, dist, road, km) {
+    const roadPart = road ? `en ${road}` : '';
+    const kmPart = km ? `kilómetro ${km}` : '';
+    this.sayUnique(`tl_${name}`, `Semáforo próximo. ${name} ${roadPart}, ${kmPart}, a ${dist} metros.`, 20000);
   },
 
   announceAccident(risk, msg) {
     if (risk === 'alta') this.sayUnique('accident', `⚠️ ${msg}`, 20000);
+  },
+
+  announceHazard(name, dist, road, km) {
+    const roadPart = road ? `en ${road}` : '';
+    const kmPart = km ? `kilómetro ${km}` : '';
+    this.sayUnique(`hz_${name}`, `Peligro en la vía. ${name} ${roadPart}, ${kmPart}, a ${dist} metros. Extreme precaución.`, 25000);
   },
 
   announceFuelLevel(liters, range) {
@@ -812,19 +822,23 @@ const AIPredictor = {
   },
 
   _calcTrafficRisk(ctx) {
-    if (ctx.speed < 5 && ctx.speed > 0) return { risk: 'alta', msg: 'Tráfico denso detectado·Velocidad muy reducida', level: 'warning' };
-    if (ctx.speed < 15 && ctx.speed > 0) return { risk: 'media', msg: 'Flujo vehicular lento·Posible congestión', level: 'info' };
-    if (ctx.speed < 30) return { risk: 'baja', msg: 'Tráfico moderado en la zona', level: 'info' };
+    const road = MapMgr.getRoadName(ctx.routeId || S.route);
+    const km = MapMgr.getKm(ctx.lat, ctx.lng, ctx.routeId);
+    const loc = `${road}, Km ${km}`;
+    if (ctx.speed < 5 && ctx.speed > 0) return { risk: 'alta', msg: `Tráfico denso·${loc}·Velocidad muy reducida`, level: 'warning', loc };
+    if (ctx.speed < 15 && ctx.speed > 0) return { risk: 'media', msg: `Flujo lento·${loc}·Posible congestión`, level: 'info', loc };
+    if (ctx.speed < 30) return { risk: 'baja', msg: `Tráfico moderado·${loc}`, level: 'info', loc };
     return null;
   },
 
   _findNearest(ctx, type) {
-    const items = type === 'checkpoint' ? MapMgr.checkpoints : MapMgr.trafficLights;
+    const items = type === 'checkpoint' ? MapMgr.checkpointData : MapMgr.trafficLightData;
     if (!items) return null;
     for (const item of items) {
       const dist = haversine(ctx.lat, ctx.lng, item.lat, item.lng) * 1000;
       if (dist < CHECKPOINT_RADIUS + 200) {
-        return { ...item, dist: Math.round(dist) };
+        const road = item.road || MapMgr.getRoadName(ctx.routeId || S.route);
+        return { ...item, dist: Math.round(dist), road, km: item.km || MapMgr.getKm(item.lat, item.lng, ctx.routeId) };
       }
     }
     return null;
@@ -915,45 +929,80 @@ const EcoRing = {
 // ============================================================
 const MapMgr = {
   map: null, marker: null, routeLine: null, checkpoints: [], trafficLights: [], hazards: [],
-  elevProfile: {},
+  elevProfile: {}, _routeKms: {},
 
   routes: {
     'teques-caracas': {
       coords: [[10.3433,-67.0336],[10.3550,-67.0200],[10.3700,-67.0000],[10.3900,-66.9700],[10.4100,-66.9400],[10.4300,-66.9200],[10.4500,-66.9000],[10.4600,-66.8800],[10.4700,-66.8700],[10.4806,-66.9036]],
-      label: 'Los Teques → Caracas'
+      label: 'Los Teques → Caracas', road: 'Panamericana'
     },
     'caracas-guaira': {
       coords: [[10.4806,-66.9036],[10.4900,-66.9200],[10.5000,-66.9400],[10.5200,-66.9600],[10.5400,-66.9800],[10.5600,-67.0000],[10.5800,-67.0200],[10.5900,-67.0400],[10.6000,-67.0500],[10.6036,-67.0300]],
-      label: 'Caracas → La Guaira'
+      label: 'Caracas → La Guaira', road: 'Autopista Caracas-La Guaira'
     },
     'teques-sananto': {
       coords: [[10.3433,-67.0336],[10.3500,-67.0500],[10.3600,-67.0700],[10.3700,-67.0800],[10.3800,-67.0700],[10.3850,-67.0550],[10.3869,-67.0500]],
-      label: 'Los Teques → San Antonio'
+      label: 'Los Teques → San Antonio', road: 'Vía Los Teques-San Antonio'
     },
     'full-commute': {
       coords: [[10.3433,-67.0336],[10.3500,-67.0200],[10.3700,-66.9900],[10.4000,-66.9500],[10.4300,-66.9200],[10.4600,-66.8900],[10.4806,-66.9036],[10.4900,-66.9300],[10.5000,-66.9600],[10.5200,-66.9800],[10.5400,-66.9900],[10.5600,-66.9700],[10.5400,-66.9500],[10.5100,-66.9200],[10.4800,-66.9000],[10.4500,-66.9100],[10.4200,-66.9400],[10.3900,-66.9700],[10.3600,-67.0000],[10.3433,-67.0336]],
-      label: 'Commute Loop'
+      label: 'Commute Loop', road: 'Mixta'
     }
   },
 
+  // Pre-compute route kilometers
+  _calcRouteKms(routeId) {
+    if (this._routeKms[routeId]) return this._routeKms[routeId];
+    const route = this.routes[routeId];
+    if (!route) return [];
+    const kms = [0];
+    let acc = 0;
+    for (let i = 1; i < route.coords.length; i++) {
+      acc += haversine(route.coords[i-1][0], route.coords[i-1][1], route.coords[i][0], route.coords[i][1]);
+      kms.push(Math.round(acc * 10) / 10);
+    }
+    this._routeKms[routeId] = { kms, total: Math.round(acc * 10) / 10 };
+    return this._routeKms[routeId];
+  },
+
+  // Get kilometer marker at a given coordinate on a route
+  getKm(lat, lng, routeId) {
+    routeId = routeId || S.route;
+    const data = this._calcRouteKms(routeId);
+    if (!data || !data.kms.length) return 0;
+    const route = this.routes[routeId];
+    if (!route) return 0;
+    let minDist = Infinity, bestIdx = 0;
+    for (let i = 0; i < route.coords.length; i++) {
+      const d = haversine(lat, lng, route.coords[i][0], route.coords[i][1]);
+      if (d < minDist) { minDist = d; bestIdx = i; }
+    }
+    return data.kms[bestIdx] || 0;
+  },
+
+  // Get road name for current route
+  getRoadName(routeId) {
+    return this.routes[routeId]?.road || 'Vía General';
+  },
+
   checkpointData: [
-    { lat: 10.3700, lng: -67.0000, name: 'Alcabala El Limón', type: 'alcabala' },
-    { lat: 10.4300, lng: -66.9200, name: 'Retén Las Adjuntas', type: 'reten' },
-    { lat: 10.4900, lng: -66.9300, name: 'Alcabala La Yaguara', type: 'alcabala' },
-    { lat: 10.5200, lng: -66.9700, name: 'Punto Control Maiquetía', type: 'reten' },
-    { lat: 10.3850, lng: -67.0550, name: 'Alcabala San Antonio', type: 'alcabala' }
+    { lat: 10.3700, lng: -67.0000, name: 'Alcabala El Limón', type: 'alcabala', km: 4.2, road: 'Panamericana' },
+    { lat: 10.4300, lng: -66.9200, name: 'Retén Las Adjuntas', type: 'reten', km: 12.8, road: 'Panamericana' },
+    { lat: 10.4900, lng: -66.9300, name: 'Alcabala La Yaguara', type: 'alcabala', km: 18.5, road: 'Panamericana' },
+    { lat: 10.5200, lng: -66.9700, name: 'Punto Control Maiquetía', type: 'reten', km: 8.2, road: 'Caracas-La Guaira' },
+    { lat: 10.3850, lng: -67.0550, name: 'Alcabala San Antonio', type: 'alcabala', km: 3.8, road: 'Los Teques-San Antonio' }
   ],
   hazardData: [
-    { lat: 10.3800, lng: -66.9900, name: 'Derrumbe frecuente', type: 'landslide' },
-    { lat: 10.4450, lng: -66.9100, name: 'Baches profundos', type: 'pothole' },
-    { lat: 10.5050, lng: -66.9550, name: 'Zona de inundación', type: 'flood' }
+    { lat: 10.3800, lng: -66.9900, name: 'Derrumbe frecuente', type: 'landslide', km: 5.5, road: 'Panamericana' },
+    { lat: 10.4450, lng: -66.9100, name: 'Baches profundos', type: 'pothole', km: 14.2, road: 'Panamericana' },
+    { lat: 10.5050, lng: -66.9550, name: 'Zona de inundación', type: 'flood', km: 22.0, road: 'Caracas-La Guaira' }
   ],
   trafficLightData: [
-    { lat: 10.3550, lng: -67.0200, name: 'Semáforo El Limón' },
-    { lat: 10.3900, lng: -66.9700, name: 'Semáforo San Diego' },
-    { lat: 10.4300, lng: -66.9200, name: 'Semáforo Las Adjuntas' },
-    { lat: 10.4600, lng: -66.8800, name: 'Semáforo Ruiz Pineda' },
-    { lat: 10.5000, lng: -66.9600, name: 'Semáforo Catia' }
+    { lat: 10.3550, lng: -67.0200, name: 'Semáforo El Limón', km: 2.5, road: 'Panamericana' },
+    { lat: 10.3900, lng: -66.9700, name: 'Semáforo San Diego', km: 7.8, road: 'Panamericana' },
+    { lat: 10.4300, lng: -66.9200, name: 'Semáforo Las Adjuntas', km: 12.8, road: 'Panamericana' },
+    { lat: 10.4600, lng: -66.8800, name: 'Semáforo Ruiz Pineda', km: 16.5, road: 'Panamericana' },
+    { lat: 10.5000, lng: -66.9600, name: 'Semáforo Catia', km: 20.0, road: 'Panamericana' }
   ],
 
   init(routeId) {
@@ -1259,7 +1308,7 @@ const CopilotUI = {
   },
 
   _icon(type) {
-    return { warning: '⚠️', critical: '🚨', success: '✅', info: 'ℹ️', eco: '🌿', speed: '📢', traffic: '🚗', checkpoint: '🛑' }[type] || 'ℹ️';
+    return { warning: '⚠️', critical: '🚨', success: '✅', info: 'ℹ️', eco: '🌿', speed: '📢', traffic: '🚗', checkpoint: '🛑', hazard: '⚠️' }[type] || 'ℹ️';
   },
 
   _flash() {
@@ -1470,7 +1519,7 @@ const Telemetry = {
 // ============================================================
 const Sim = {
   _int: null, _tick: 0, _routeProg: 0, _aiTimer: null,
-  _parkCount: 0, _wasMoving: false, _lastAI: 0,
+  _parkCount: 0, _wasMoving: false, _lastAI: 0, _lastHazardWarn: {},
   dt: 0.1,
 
   start() {
@@ -1673,7 +1722,8 @@ const Sim = {
           speed: S.speed, rpm: S.rpm, gear: S.gear, slope: S.slope,
           lat: S.pos.lat, lng: S.pos.lng, engineOn: S.speed > 0 || S.running,
           parked: S.parked, weather: S.weather,
-          movement: Telemetry.movementType, mode: Telemetry.mode
+          movement: Telemetry.movementType, mode: Telemetry.mode,
+          routeId: S.route
         });
 
         // Build reasoning text
@@ -1681,18 +1731,22 @@ const Sim = {
         if (result.trafficRisk) {
           lines.push(`🚦 ${result.trafficRisk.msg}`);
           this._maybeAlert(result.trafficRisk.level, 'Tráfico', result.trafficRisk.msg);
-          Voice.announceTraffic(result.trafficRisk.risk, result.trafficRisk.msg);
+          Voice.announceTraffic(result.trafficRisk.risk, result.trafficRisk.msg, result.trafficRisk.loc);
         }
         if (result.checkpointProximity) {
-          lines.push(`🛑 Alcabala cerca: ${result.checkpointProximity.name} a ${result.checkpointProximity.dist}m`);
-          CopilotUI.show('checkpoint', `🛑 ${result.checkpointProximity.name}`, `Retén a ${result.checkpointProximity.dist}m·Desacelera progresivamente`, 5000);
-          TripLog.addAlert('checkpoint', result.checkpointProximity.name);
-          Voice.announceCheckpoint(result.checkpointProximity.name, result.checkpointProximity.dist);
+          const cp = result.checkpointProximity;
+          const locStr = `${cp.road}, Km ${cp.km}`;
+          lines.push(`🛑 Alcabala: ${cp.name} · ${locStr} · a ${cp.dist}m`);
+          CopilotUI.show('checkpoint', `🛑 ${cp.name}`, `${locStr} · ${cp.dist}m · Desacelera progresivamente`, 5000);
+          TripLog.addAlert('checkpoint', `${cp.name} ${locStr}`);
+          Voice.announceCheckpoint(cp.name, cp.dist, cp.road, cp.km);
         }
         if (result.trafficLightProximity) {
-          lines.push(`🚦 ${result.trafficLightProximity.name} a ${result.trafficLightProximity.dist}m`);
-          CopilotUI.show('info', `🚦 ${result.trafficLightProximity.name}`, `Semáforo a ${result.trafficLightProximity.dist}m·Velocidad recomendada: 30 km/h para Green Wave`, 4000);
-          Voice.announceTrafficLight(result.trafficLightProximity.name, result.trafficLightProximity.dist);
+          const tl = result.trafficLightProximity;
+          const locStr = `${tl.road}, Km ${tl.km}`;
+          lines.push(`🚦 Semáforo: ${tl.name} · ${locStr} · a ${tl.dist}m`);
+          CopilotUI.show('info', `🚦 ${tl.name}`, `${locStr} · ${tl.dist}m · Green Wave: 30 km/h`, 4000);
+          Voice.announceTrafficLight(tl.name, tl.dist, tl.road, tl.km);
         }
         if (result.accidentRisk) {
           lines.push(`${result.accidentRisk.msg}`);
@@ -1714,6 +1768,22 @@ const Sim = {
         if (result.parkingDetected) {
           lines.push(`🅿️ ${result.parkingDetected.msg}`);
           TripLog.endTrip();
+        }
+
+        // Hazard proximity check (direct in aiLoop)
+        const currentKm = MapMgr.getKm(S.pos.lat, S.pos.lng);
+        const currentRoad = MapMgr.getRoadName(S.route);
+        for (const h of MapMgr.hazardData) {
+          const dist = haversine(S.pos.lat, S.pos.lng, h.lat, h.lng) * 1000;
+          if (dist < 400 && (Date.now() - (this._lastHazardWarn?.[h.name] || 0)) > 45000) {
+            if (!this._lastHazardWarn) this._lastHazardWarn = {};
+            this._lastHazardWarn[h.name] = Date.now();
+            const hLoc = `${h.road || currentRoad}, Km ${h.km || currentKm}`;
+            lines.push(`⚠️ ${h.name} · ${hLoc} · a ${Math.round(dist)}m`);
+            CopilotUI.show('warning', `⚠️ ${h.name}`, `${hLoc} · ${Math.round(dist)}m · Precaución`, 6000);
+            TripLog.addAlert('hazard', `${h.name} ${hLoc}`);
+            Voice.announceHazard(h.name, Math.round(dist), h.road || currentRoad, h.km || currentKm);
+          }
         }
 
         // Periodic fuel/range voice announcement (every 15s)
