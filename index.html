@@ -651,6 +651,20 @@ body{
         </div>
       </div>
 
+      <!-- DETECTION RADIUS -->
+      <div class="settings-section">
+        <h3>📡 Radio de Detección</h3>
+        <div class="settings-row">
+          <label>Alertas de tráfico</label>
+          <input type="range" id="detectRadiusRange" min="2" max="5" step="0.5">
+          <span class="settings-val" id="detectRadiusDisplay">5.0</span>
+          <span style="font-size:10px;color:var(--text-dim)">km</span>
+        </div>
+        <div style="font-size:10px;color:var(--text-dim);margin-top:2px">
+          La IA detectará obstáculos y tráfico en este radio (2–5 km)
+        </div>
+      </div>
+
       <div class="settings-section">
         <h3>🚗 Vehículo</h3>
         <div class="settings-row">
@@ -725,7 +739,6 @@ let FUEL_CAP = 46;
 let BASE_KPL = 12.5;
 const REDLINE = 6000;
 const MAX_SPEED = 160;
-const CHECKPOINT_RADIUS = 5000; // 5km
 
 // ============================================================
 //  VEHICLE DATABASE
@@ -1164,7 +1177,7 @@ const S = {
   weather: { temp: 24, cond: 'Despejado', icon: '☀️', alerts: [] },
   engineTemp: 85,
   ai: { status: 'Idle', lastThinking: '' },
-  settings: { speedLimit: 70, alertFuel: true }
+  settings: { speedLimit: 70, alertFuel: true, detectRadius: 5000 }
 };
 
 // ============================================================
@@ -1179,6 +1192,9 @@ const Settings = {
       if (d && typeof d.speedLimit === 'number') {
         S.settings.speedLimit = d.speedLimit;
         this._applySpeedLimit(d.speedLimit);
+      }
+      if (d && typeof d.detectRadius === 'number') {
+        S.settings.detectRadius = d.detectRadius;
       }
     } catch(e) {}
   },
@@ -1202,6 +1218,8 @@ const Settings = {
     document.getElementById('settingsFuelInput').value = S.fuel;
     document.getElementById('speedLimitRange').value = S.settings.speedLimit;
     document.getElementById('speedLimitDisplay').textContent = S.settings.speedLimit;
+    document.getElementById('detectRadiusRange').value = (S.settings.detectRadius / 1000);
+    document.getElementById('detectRadiusDisplay').textContent = (S.settings.detectRadius / 1000).toFixed(1);
     VehicleMgr.populateSelectors();
   },
 
@@ -1209,6 +1227,14 @@ const Settings = {
     document.getElementById('speedLimitRange').value = val;
     document.getElementById('speedLimitDisplay').textContent = val;
     S.settings.speedLimit = val;
+    this.save();
+  },
+
+  _applyDetectRadius(km) {
+    const meters = Math.round(km * 1000);
+    document.getElementById('detectRadiusRange').value = km;
+    document.getElementById('detectRadiusDisplay').textContent = km.toFixed(1);
+    S.settings.detectRadius = meters;
     this.save();
   },
 
@@ -1525,10 +1551,11 @@ const AIPredictor = {
     // Look for obstacles AHEAD within 500m to 5000m (predictive)
     let nearestObstacle = null;
     let nearestDist = Infinity;
+    const maxDist = S.settings.detectRadius;
     const allItems = [...MapMgr.checkpointData, ...MapMgr.trafficLightData, ...MapMgr.hazardData];
     for (const item of allItems) {
       const d = haversine(ctx.lat, ctx.lng, item.lat, item.lng) * 1000;
-      if (d >= 200 && d <= 5000 && d < nearestDist) {
+      if (d >= 200 && d <= maxDist && d < nearestDist) {
         nearestDist = d;
         nearestObstacle = item;
       }
@@ -1605,7 +1632,7 @@ const AIPredictor = {
     const results = [];
     for (const item of items) {
       const dist = haversine(ctx.lat, ctx.lng, item.lat, item.lng) * 1000;
-      if (dist < CHECKPOINT_RADIUS) {
+      if (dist < S.settings.detectRadius) {
         const road = item.road || MapMgr.getRoadName(ctx.routeId || S.route);
         results.push({ ...item, dist: Math.round(dist), road, km: item.km || MapMgr.getKm(item.lat, item.lng, ctx.routeId) });
       }
@@ -1831,6 +1858,22 @@ const MapMgr = {
     this.map = L.map('map', { center: [10.4, -66.95], zoom: 11, zoomControl: false, attributionControl: false });
     L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom: 19 }).addTo(this.map);
     L.control.zoom({ position: 'bottomright' }).addTo(this.map);
+    // Locate-user button
+    L.Control.LocateUser = L.Control.extend({
+      onAdd: function(map) {
+        const btn = L.DomUtil.create('button', 'leaflet-control-locate');
+        btn.innerHTML = '📍';
+        btn.title = 'Centrar en mi ubicación';
+        btn.style.cssText = 'width:34px;height:34px;background:#1a1a2e;border:1px solid #333;border-radius:4px;cursor:pointer;font-size:18px;display:flex;align-items:center;justify-content:center;margin-bottom:4px';
+        btn.onclick = function() {
+          const pos = S.pos;
+          map.setView([pos.lat, pos.lng], Math.max(map.getZoom(), 13), { animate: true });
+          if (MapMgr.marker) MapMgr.marker.setLatLng([pos.lat, pos.lng]);
+        };
+        return btn;
+      }
+    });
+    new L.Control.LocateUser({ position: 'bottomright' }).addTo(this.map);
     const icon = L.divIcon({
       html: '<div style="width:14px;height:14px;background:#00e5ff;border-radius:50%;border:2px solid #fff;box-shadow:0 0 12px rgba(0,229,255,0.5)"></div>',
       iconSize: [14,14], iconAnchor: [7,7], className: ''
@@ -2897,7 +2940,7 @@ const Sim = {
         const currentRoad = MapMgr.getRoadName(S.route);
         for (const h of MapMgr.hazardData) {
           const dist = haversine(S.pos.lat, S.pos.lng, h.lat, h.lng) * 1000;
-          if (dist < CHECKPOINT_RADIUS && (Date.now() - (this._lastHazardWarn?.[h.name] || 0)) > 30000) {
+          if (dist < S.settings.detectRadius && (Date.now() - (this._lastHazardWarn?.[h.name] || 0)) > 30000) {
             if (!this._lastHazardWarn) this._lastHazardWarn = {};
             this._lastHazardWarn[h.name] = Date.now();
             const hLoc = `${h.road || currentRoad}, Km ${h.km || currentKm}`;
@@ -2915,11 +2958,12 @@ const Sim = {
           const km = MapMgr.getKm(S.pos.lat, S.pos.lng);
           const dir = MapMgr.getDirection(S.route, S.pos.lat, S.pos.lng);
           const dirStr = dir.towards ? ` sentido ${dir.towards}` : '';
-          // Find nearest obstacle within 500-5000m ahead
+          // Find nearest obstacle within configured radius ahead
           let obs = null, obsDist = Infinity;
+          const maxDist = S.settings.detectRadius;
           for (const item of [...MapMgr.checkpointData, ...MapMgr.trafficLightData, ...MapMgr.hazardData]) {
             const d = haversine(S.pos.lat, S.pos.lng, item.lat, item.lng) * 1000;
-            if (d >= 200 && d <= 5000 && d < obsDist) { obsDist = d; obs = item; }
+            if (d >= 200 && d <= maxDist && d < obsDist) { obsDist = d; obs = item; }
           }
           if (obs) {
             const cause = obs.name || obs.type || 'obstáculo';
@@ -3024,6 +3068,9 @@ function initUI() {
   });
   document.getElementById('speedLimitRange').addEventListener('input', (e) => {
     Settings._applySpeedLimit(parseInt(e.target.value));
+  });
+  document.getElementById('detectRadiusRange').addEventListener('input', (e) => {
+    Settings._applyDetectRadius(parseFloat(e.target.value));
   });
   document.getElementById('settingsFuelSetBtn').addEventListener('click', () => {
     const v = parseFloat(document.getElementById('settingsFuelInput').value);
