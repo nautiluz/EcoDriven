@@ -394,6 +394,30 @@ body{
 .settings-fuel-row button{padding:6px 14px;background:var(--cyan);border:none;color:#000;font-family:var(--font-display);font-size:11px;font-weight:700;border-radius:4px;cursor:pointer}
 .settings-fuel-row button:hover{opacity:.85}
 .settings-row select option{background:var(--bg);color:var(--text)}
+
+/* Gamification */
+.level-badge{
+  display:flex;align-items:center;gap:6px;
+  background:var(--surface);border:1px solid var(--border);border-radius:20px;
+  padding:3px 10px 3px 6px;font-size:10px;cursor:pointer;transition:border-color .2s;position:relative
+}
+.level-badge:hover{border-color:var(--cyan)}
+.level-badge .level-icon{font-size:14px}
+.level-badge .level-name{font-family:var(--font-display);color:var(--cyan);font-size:9px;white-space:nowrap;letter-spacing:.5px}
+.level-badge .level-xp{color:var(--text-dim);font-size:8px}
+.level-badge .xp-bar{position:absolute;bottom:-1px;left:4px;right:4px;height:2px;background:var(--border);border-radius:1px;overflow:hidden}
+.level-badge .xp-bar-fill{height:100%;background:var(--green);border-radius:1px;transition:width .5s}
+.achievement-toast{
+  position:fixed;bottom:80px;right:16px;z-index:9999;
+  background:var(--surface);border:1px solid var(--green);border-radius:8px;
+  padding:10px 14px;box-shadow:0 4px 20px rgba(0,0,0,.5);
+  display:flex;align-items:center;gap:10px;animation:slideUp .3s ease;
+  max-width:280px;font-size:11px
+}
+.achievement-toast .ach-icon{font-size:22px}
+.achievement-toast .ach-title{color:var(--green);font-family:var(--font-display);font-size:10px;text-transform:uppercase;letter-spacing:.5px}
+.achievement-toast .ach-desc{color:var(--text);margin-top:2px}
+@keyframes slideUp{from{transform:translateY(20px);opacity:0}to{transform:translateY(0);opacity:1}}
 </style>
 </head>
 <body>
@@ -425,6 +449,11 @@ body{
       </div>
     </div>
     <div class="settings-btn" id="settingsBtn" title="Configuración">⚙️</div>
+    <div class="level-badge" id="levelBadge" title="Nivel de Eco-Conducción">
+      <span class="level-icon" id="levelIcon">🌱</span>
+      <span class="level-name" id="levelName">Novato</span>
+      <div class="xp-bar"><div class="xp-bar-fill" id="xpBarFill" style="width:0%"></div></div>
+    </div>
     <select id="routeSelect">
       <option value="teques-caracas">Los Teques → Caracas</option>
       <option value="caracas-guaira">Caracas → La Guaira</option>
@@ -641,6 +670,44 @@ body{
         </div>
       </div>
 
+    </div>
+  </div>
+</div>
+
+<!-- Achievements Modal -->
+<div class="modal-overlay" id="gamifyModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h2>🏆 Logros y Niveles</h2>
+      <button class="modal-close" onclick="document.getElementById('gamifyModal').classList.remove('open')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="settings-section">
+        <h3>📊 Progreso</h3>
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
+          <span style="font-size:32px" id="gamifyLevelIcon">🌱</span>
+          <div style="flex:1">
+            <div style="font-family:var(--font-display);font-size:14px;color:var(--cyan)" id="gamifyLevelName">Novato</div>
+            <div style="font-size:10px;color:var(--text-dim)" id="gamifyLevelXp">0 XP</div>
+            <div style="height:4px;background:var(--border);border-radius:2px;margin-top:4px;overflow:hidden">
+              <div id="gamifyXpBar" style="height:100%;background:var(--green);border-radius:2px;width:0%"></div>
+            </div>
+            <div style="font-size:9px;color:var(--text-dim);margin-top:2px" id="gamifyNextLevel">Siguiente: Ahorrador</div>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:10px">
+          <div>Viajes: <strong id="gamifyTrips">0</strong></div>
+          <div>km totales: <strong id="gamifyKm">0</strong></div>
+          <div>Viajes eco: <strong id="gamifyEcos">0</strong></div>
+          <div>Comb. ahorrado: <strong id="gamifyFuelSaved">0 L</strong></div>
+        </div>
+      </div>
+      <div class="settings-section">
+        <h3>🏅 Logros</h3>
+        <div id="gamifyAchievementsList">
+          <div class="empty">Cargando...</div>
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -1158,8 +1225,184 @@ const Settings = {
 };
 
 // ============================================================
-//  MATH ENGINE
+//  GAMIFICATION (XP, niveles, logros)
 // ============================================================
+const GAMIFY_LEVELS = [
+  { level: 1, name: 'Novato', icon: '🌱', xpRequired: 0 },
+  { level: 2, name: 'Ahorrador', icon: '🌿', xpRequired: 150 },
+  { level: 3, name: 'Eco-Conductor', icon: '🍀', xpRequired: 400 },
+  { level: 4, name: 'Verde', icon: '🌲', xpRequired: 800 },
+  { level: 5, name: 'Experto', icon: '🏆', xpRequired: 1400 },
+  { level: 6, name: 'Maestro', icon: '👑', xpRequired: 2200 },
+  { level: 7, name: 'Leyenda', icon: '💚', xpRequired: 3500 }
+];
+
+const GAMIFY_ACHIEVEMENTS = {
+  first_trip: { icon: '🚀', name: 'Primer Viaje', desc: 'Completa tu primer viaje', xp: 30 },
+  eco_5: { icon: '🌿', name: 'Eco 5', desc: '5 viajes con puntuación ecológica >80%', xp: 50 },
+  eco_10: { icon: '🌳', name: 'Eco 10', desc: '10 viajes ecológicos', xp: 80 },
+  eco_25: { icon: '💚', name: 'Eco 25', desc: '25 viajes ecológicos', xp: 150 },
+  ahorro_5l: { icon: '⛽', name: 'Ahorro 5L', desc: 'Ahorra 5 litros de combustible', xp: 60 },
+  ahorro_20l: { icon: '⛽', name: 'Ahorro 20L', desc: 'Ahorra 20 litros de combustible', xp: 120 },
+  km_100: { icon: '📏', name: 'Centenario', desc: 'Recorre 100 km totales', xp: 40 },
+  km_500: { icon: '🌟', name: 'Viajero', desc: 'Recorre 500 km totales', xp: 100 },
+  precision: { icon: '🎯', name: 'Precisión', desc: 'Viaje completo sin alertas', xp: 50 },
+  nocturno: { icon: '🌙', name: 'Nocturno', desc: 'Conduce de noche', xp: 20 }
+};
+
+const Gamify = {
+  _key: 'ecodriven_gamify',
+  data: { xp: 0, trips: 0, ecos: 0, totalKm: 0, fuelSaved: 0, nightTrips: 0, achievements: {} },
+
+  load() {
+    try {
+      const d = JSON.parse(localStorage.getItem(this._key));
+      if (d) Object.assign(this.data, d);
+    } catch(e) {}
+    this._updateUI();
+  },
+
+  save() {
+    try { localStorage.setItem(this._key, JSON.stringify(this.data)); } catch(e) {}
+  },
+
+  addXP(amount, reason) {
+    this.data.xp += amount;
+    this.save();
+    this._updateUI();
+  },
+
+  getLevel() {
+    let lvl = GAMIFY_LEVELS[0];
+    for (const l of GAMIFY_LEVELS) {
+      if (this.data.xp >= l.xpRequired) lvl = l;
+    }
+    return lvl;
+  },
+
+  getNextLevel() {
+    const cur = this.getLevel();
+    for (let i = 0; i < GAMIFY_LEVELS.length; i++) {
+      if (GAMIFY_LEVELS[i].xpRequired > cur.xpRequired) return GAMIFY_LEVELS[i];
+    }
+    return null;
+  },
+
+  _updateUI() {
+    const lvl = this.getLevel();
+    const next = this.getNextLevel();
+    document.getElementById('levelIcon').textContent = lvl.icon;
+    document.getElementById('levelName').textContent = lvl.name;
+    if (next) {
+      const curXp = this.data.xp - lvl.xpRequired;
+      const needXp = next.xpRequired - lvl.xpRequired;
+      const pct = Math.min(100, Math.round((curXp / needXp) * 100));
+      document.getElementById('xpBarFill').style.width = pct + '%';
+      document.getElementById('levelBadge').title = `${lvl.name} · ${this.data.xp} XP · Próximo: ${next.name} (${pct}%)`;
+    } else {
+      document.getElementById('xpBarFill').style.width = '100%';
+      document.getElementById('levelBadge').title = `${lvl.name} · ${this.data.xp} XP · Nivel máximo`;
+    }
+  },
+
+  unlockAchievement(id) {
+    if (this.data.achievements[id]) return false;
+    const ach = GAMIFY_ACHIEVEMENTS[id];
+    if (!ach) return false;
+    this.data.achievements[id] = Date.now();
+    this.addXP(ach.xp, `Logro: ${ach.name}`);
+    this._showToast(ach);
+    return true;
+  },
+
+  _showToast(ach) {
+    const toast = document.createElement('div');
+    toast.className = 'achievement-toast';
+    toast.innerHTML = `<span class="ach-icon">${ach.icon}</span><div><div class="ach-title">★ Logro desbloqueado</div><div class="ach-desc">${ach.name}: ${ach.desc} +${ach.xp} XP</div></div>`;
+    document.body.appendChild(toast);
+    setTimeout(() => { toast.style.opacity = '0'; toast.style.transition = 'opacity .5s'; setTimeout(() => toast.remove(), 500); }, 3500);
+    // Voice announcement
+    Voice.sayUnique('achievement', `Logro desbloqueado: ${ach.name}. ${ach.desc}`, 30000);
+  },
+
+  // Call from trip end
+  onTripEnd(dist, eco, alerts, fuelBurned) {
+    this.data.trips++;
+    this.data.totalKm += dist;
+    this.addXP(Math.round(dist * 0.5), `${Math.round(dist)} km recorridos`);
+
+    if (eco > 80) {
+      this.data.ecos++;
+      this.addXP(5, 'Viaje ecológico >80%');
+    }
+    if (eco > 90) this.addXP(10, 'Viaje excelente >90%');
+    if (alerts === 0) this.addXP(15, 'Viaje sin alertas');
+
+    // Fuel saved vs baseline (12 km/L)
+    const baselineConsumption = dist / 12;
+    const saved = Math.max(0, baselineConsumption - fuelBurned);
+    this.data.fuelSaved += saved;
+    if (saved > 0) this.addXP(Math.round(saved * 3), `${saved.toFixed(2)}L ahorrados`);
+
+    // Check achievements
+    if (this.data.trips === 1) this.unlockAchievement('first_trip');
+    if (this.data.ecos >= 5) this.unlockAchievement('eco_5');
+    if (this.data.ecos >= 10) this.unlockAchievement('eco_10');
+    if (this.data.ecos >= 25) this.unlockAchievement('eco_25');
+    if (this.data.fuelSaved >= 5) this.unlockAchievement('ahorro_5l');
+    if (this.data.fuelSaved >= 20) this.unlockAchievement('ahorro_20l');
+    if (this.data.totalKm >= 100) this.unlockAchievement('km_100');
+    if (this.data.totalKm >= 500) this.unlockAchievement('km_500');
+    if (alerts === 0) this.unlockAchievement('precision');
+    // Night detection (18:00-06:00)
+    const hour = new Date().getHours();
+    if (hour < 6 || hour >= 18) {
+      this.data.nightTrips++;
+      if (this.data.nightTrips === 1) this.unlockAchievement('nocturno');
+    }
+
+    this.save();
+  },
+
+  // Show achievements in a modal
+  openModal() {
+    this.populateModal();
+    const modal = document.getElementById('gamifyModal');
+    if (modal) modal.classList.add('open');
+  },
+
+  populateModal() {
+    const lvl = this.getLevel();
+    const next = this.getNextLevel();
+    document.getElementById('gamifyLevelIcon').textContent = lvl.icon;
+    document.getElementById('gamifyLevelName').textContent = `${lvl.name} (Nivel ${lvl.level})`;
+    document.getElementById('gamifyLevelXp').textContent = `${this.data.xp} XP`;
+    document.getElementById('gamifyTrips').textContent = this.data.trips;
+    document.getElementById('gamifyKm').textContent = Math.round(this.data.totalKm);
+    document.getElementById('gamifyEcos').textContent = this.data.ecos;
+    document.getElementById('gamifyFuelSaved').textContent = `${this.data.fuelSaved.toFixed(1)} L`;
+    if (next) {
+      const curXp = this.data.xp - lvl.xpRequired;
+      const needXp = next.xpRequired - lvl.xpRequired;
+      const pct = Math.min(100, Math.round((curXp / needXp) * 100));
+      document.getElementById('gamifyXpBar').style.width = pct + '%';
+      document.getElementById('gamifyNextLevel').textContent = `Siguiente: ${next.name} (${pct}%)`;
+    } else {
+      document.getElementById('gamifyXpBar').style.width = '100%';
+      document.getElementById('gamifyNextLevel').textContent = '🏆 Nivel máximo alcanzado';
+    }
+    // Achievements list
+    const list = document.getElementById('gamifyAchievementsList');
+    list.innerHTML = Object.entries(GAMIFY_ACHIEVEMENTS).map(([id, ach]) => {
+      const unlocked = this.data.achievements[id];
+      return `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);opacity:${unlocked?1:0.4};font-size:10px">
+        <span style="font-size:18px">${unlocked ? ach.icon : '🔒'}</span>
+        <div style="flex:1"><div style="color:var(--text);font-weight:600">${ach.name}</div><div style="color:var(--text-dim)">${ach.desc} ${unlocked ? '✓' : `+${ach.xp} XP`}</div></div>
+        <span style="font-size:9px;color:var(--text-dim)">${unlocked ? new Date(unlocked).toLocaleDateString() : ''}</span>
+      </div>`;
+    }).join('');
+  }
+};
 function calcRPM(speed, gear) {
   if (gear < 1 || speed < 1) return 0;
   return (speed * GEAR_RATIOS[gear] * FINAL_DRIVE * 1000) / (60 * WHEEL_CIRC);
@@ -1967,6 +2210,8 @@ const TripLog = {
       events: []
     });
     this.saveTrips(trips.slice(0, 50));
+    // Award XP for trip
+    Gamify.onTripEnd(S.dist, S.eco, S.alertsCount, S.burned);
   },
 
   addAlert(type, title) {
@@ -2879,10 +3124,13 @@ function init() {
   FuelPersist.load(); // Load persisted fuel level
   Settings.load(); // Load persisted settings (speed limit)
   VehicleMgr.load(); // Load persisted vehicle selection
+  Gamify.load(); // Load gamification data
   AudioMgr.init();
   EcoRing.init();
   MapMgr.init('teques-caracas');
   initUI();
+  // Level badge click → achievements modal
+  document.getElementById('levelBadge').addEventListener('click', () => Gamify.openModal());
   let rt;
   window.addEventListener('resize', () => {
     clearTimeout(rt);
