@@ -1278,11 +1278,51 @@ const AIPredictor = {
     const dir = MapMgr.getDirection(ctx.routeId || S.route, ctx.lat, ctx.lng);
     const dirStr = dir.towards ? `, sentido ${dir.towards}` : '';
     const loc = `${road}, Km ${km}${dirStr}`;
-    let risk = null;
-    if (ctx.speed < 5 && ctx.speed > 0) risk = { risk: 'alta', msg: `Tráfico denso en ${loc}, velocidad muy reducida. Se recomienda detenerse si es posible`, level: 'warning', loc, road, km, dir: dir.towards };
-    else if (ctx.speed < 15 && ctx.speed > 0) risk = { risk: 'media', msg: `Flujo lento en ${loc}, posible congestión vehicular`, level: 'info', loc, road, km, dir: dir.towards };
-    else if (ctx.speed < 30) risk = { risk: 'baja', msg: `Tráfico moderado en ${loc}`, level: 'info', loc, road, km, dir: dir.towards };
-    return risk;
+
+    // Look for obstacles AHEAD within 500m to 5000m (predictive)
+    let nearestObstacle = null;
+    let nearestDist = Infinity;
+    const allItems = [...MapMgr.checkpointData, ...MapMgr.trafficLightData, ...MapMgr.hazardData];
+    for (const item of allItems) {
+      const d = haversine(ctx.lat, ctx.lng, item.lat, item.lng) * 1000;
+      if (d >= 200 && d <= 5000 && d < nearestDist) {
+        nearestDist = d;
+        nearestObstacle = item;
+      }
+    }
+
+    // Only announce traffic if user speed is reduced AND there's an obstacle ahead, or just slow speed
+    if (ctx.speed < 15 && ctx.speed > 0 && nearestObstacle && nearestDist < 2000) {
+      // Queue caused by obstacle ahead
+      const obsName = nearestObstacle.name || nearestObstacle.type || 'obstáculo';
+      const altRoute = this._getAlternateRoute(ctx.routeId || S.route, nearestObstacle.road || road);
+      const altMsg = altRoute ? `. ${altRoute}` : '. Reduzca velocidad y mantenga distancia';
+      return { risk: 'alta', msg: `Cola por ${obsName} a ${Math.round(nearestDist)}m en ${loc}${altMsg}`, level: 'warning', loc, road, km, dir: dir.towards };
+    }
+    if (ctx.speed < 5 && ctx.speed > 0) {
+      const altRoute = this._getAlternateRoute(ctx.routeId || S.route, road);
+      const altMsg = altRoute ? `. ${altRoute}` : '. Se recomienda detenerse si es posible';
+      return { risk: 'alta', msg: `Tráfico denso en ${loc}${altMsg}`, level: 'warning', loc, road, km, dir: dir.towards };
+    }
+    if (ctx.speed < 15 && ctx.speed > 0) {
+      const altRoute = nearestObstacle ? this._getAlternateRoute(ctx.routeId || S.route, road) : null;
+      const altMsg = altRoute ? `. ${altRoute}` : '';
+      return { risk: 'media', msg: `Flujo lento en ${loc}${altMsg}`, level: 'info', loc, road, km, dir: dir.towards };
+    }
+    if (ctx.speed < 30) {
+      return { risk: 'baja', msg: `Tráfico moderado en ${loc}`, level: 'info', loc, road, km, dir: dir.towards };
+    }
+    return null;
+  },
+
+  // Alternate route suggestions based on road and obstacle
+  _getAlternateRoute(routeId, road) {
+    const altRoutes = {
+      'Panamericana': 'Vía alterna: salida por San Diego hacia la autopista Caracas-La Guaira',
+      'Autopista Caracas-La Guaira': 'Vía alterna: suba por El Junquito o Carayaca',
+      'Vía Los Teques-San Antonio': 'Vía alterna: rodeo por San Pedro'
+    };
+    return altRoutes[road] || (road ? `Busque una vía alterna en ${road}` : null);
   },
 
   _checkSpeedExcess(ctx) {
@@ -2607,7 +2647,7 @@ const Sim = {
           TripLog.endTrip();
         }
 
-        // Hazard proximity check (direct in aiLoop) — radio 2km
+        // Hazard proximity check (direct in aiLoop) — radio 5km
         const currentKm = MapMgr.getKm(S.pos.lat, S.pos.lng);
         const currentRoad = MapMgr.getRoadName(S.route);
         for (const h of MapMgr.hazardData) {
@@ -2624,19 +2664,29 @@ const Sim = {
           }
         }
 
-        // Traffic jam check by speed (every 5s within 2km context)
+        // Traffic jam check by speed (every 5s, checks obstacles within 5km ahead)
         if (S.speed > 0 && S.speed < 30 && this._tick % 50 === 0) {
           const road = MapMgr.getRoadName(S.route);
           const km = MapMgr.getKm(S.pos.lat, S.pos.lng);
           const dir = MapMgr.getDirection(S.route, S.pos.lat, S.pos.lng);
           const dirStr = dir.towards ? ` sentido ${dir.towards}` : '';
-          TrafficData.getDelay(S.pos.lat, S.pos.lng, S.route).then(delay => {
-            if (delay && delay.delayMin > 0) {
-              const msg = `Tráfico lento en ${road}, Km ${km}${dirStr}. Velocidad actual ${Math.round(S.speed)} km/h, retraso estimado ${delay.delayMin} minutos`;
-              CopilotUI.show('warning', '🚗 Tráfico', msg, 5000);
-              Voice.sayUnique('traffic_5s', msg, 25000);
-            }
-          }).catch(() => {});
+          // Find nearest obstacle within 500-5000m ahead
+          let obs = null, obsDist = Infinity;
+          for (const item of [...MapMgr.checkpointData, ...MapMgr.trafficLightData, ...MapMgr.hazardData]) {
+            const d = haversine(S.pos.lat, S.pos.lng, item.lat, item.lng) * 1000;
+            if (d >= 200 && d <= 5000 && d < obsDist) { obsDist = d; obs = item; }
+          }
+          if (obs) {
+            const cause = obs.name || obs.type || 'obstáculo';
+            const altRoute = AIPredictor._getAlternateRoute(S.route, road);
+            const altMsg = altRoute ? `. ${altRoute}` : '. Conduzca con precaución';
+            const msg = `Tráfico lento en ${road}, Km ${km}${dirStr}: ${cause} a ${Math.round(obsDist)}m${altMsg}`;
+            CopilotUI.show('warning', '🚗 Tráfico', msg, 5000);
+            Voice.sayUnique('traffic_5s', msg, 25000);
+          } else {
+            const msg = `Tráfico lento en ${road}, Km ${km}${dirStr}. Velocidad: ${Math.round(S.speed)} km/h`;
+            CopilotUI.show('info', '🚗 Tráfico', msg, 4000);
+          }
         }
 
         // Periodic fuel/range voice announcement (every 15s)
