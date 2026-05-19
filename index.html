@@ -658,7 +658,7 @@ let FUEL_CAP = 46;
 let BASE_KPL = 12.5;
 const REDLINE = 6000;
 const MAX_SPEED = 160;
-const CHECKPOINT_RADIUS = 2000; // 2km
+const CHECKPOINT_RADIUS = 5000; // 5km
 
 // ============================================================
 //  VEHICLE DATABASE
@@ -1319,16 +1319,14 @@ const AIPredictor = {
   _findNearest(ctx, type) {
     const items = type === 'checkpoint' ? MapMgr.checkpointData : MapMgr.trafficLightData;
     if (!items) return null;
-    // Return all items within 2km radius (not just the nearest)
     const results = [];
     for (const item of items) {
       const dist = haversine(ctx.lat, ctx.lng, item.lat, item.lng) * 1000;
-      if (dist < 2000) {
+      if (dist < CHECKPOINT_RADIUS) {
         const road = item.road || MapMgr.getRoadName(ctx.routeId || S.route);
         results.push({ ...item, dist: Math.round(dist), road, km: item.km || MapMgr.getKm(item.lat, item.lng, ctx.routeId) });
       }
     }
-    // Return the closest one if any found
     if (results.length === 0) return null;
     results.sort((a, b) => a.dist - b.dist);
     return results[0];
@@ -2614,7 +2612,7 @@ const Sim = {
         const currentRoad = MapMgr.getRoadName(S.route);
         for (const h of MapMgr.hazardData) {
           const dist = haversine(S.pos.lat, S.pos.lng, h.lat, h.lng) * 1000;
-          if (dist < 2000 && (Date.now() - (this._lastHazardWarn?.[h.name] || 0)) > 30000) {
+          if (dist < CHECKPOINT_RADIUS && (Date.now() - (this._lastHazardWarn?.[h.name] || 0)) > 30000) {
             if (!this._lastHazardWarn) this._lastHazardWarn = {};
             this._lastHazardWarn[h.name] = Date.now();
             const hLoc = `${h.road || currentRoad}, Km ${h.km || currentKm}`;
