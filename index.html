@@ -50,6 +50,23 @@ body{
 .weather-badge:hover{border-color:var(--cyan)}
 .weather-badge .temp{font-family:var(--font-display);color:var(--cyan);font-size:12px}
 .weather-badge .cond{color:var(--text-dim);font-size:9px;text-transform:uppercase;letter-spacing:.5px}
+.gps-badge{
+  display:flex;align-items:center;gap:4px;
+  background:var(--surface);border:1px solid var(--border);border-radius:20px;
+  padding:3px 10px 3px 6px;font-size:10px;cursor:pointer;transition:border-color .2s
+}
+.gps-badge:hover{border-color:var(--cyan)}
+.gps-badge .gps-src{font-family:var(--font-display);color:var(--text-dim);font-size:8px;letter-spacing:1px}
+.gps-badge .gps-src.active{color:var(--green);text-shadow:var(--glow-green)}
+.gps-badge .gps-src.sim{color:var(--orange)}
+.movement-badge{
+  display:inline-block;font-size:10px;padding:1px 6px;border-radius:3px;
+  vertical-align:middle;margin-left:4px;letter-spacing:.5px
+}
+.movement-badge.vehicle{background:rgba(0,229,255,.12);color:var(--cyan)}
+.movement-badge.walking{background:rgba(0,255,136,.12);color:var(--green)}
+.movement-badge.stopped{background:rgba(255,136,0,.1);color:var(--orange)}
+.movement-badge.unknown{display:none}
 .clock{font-family:var(--font-display);font-size:12px;color:var(--cyan);letter-spacing:1px;white-space:nowrap}
 .header select{
   background:var(--bg);color:var(--text);border:1px solid var(--border);
@@ -345,6 +362,10 @@ body{
       <span class="temp" id="weatherTemp">--°</span>
       <span class="cond" id="weatherCond">--</span>
     </div>
+    <div class="gps-badge" id="gpsBadge" title="Toca para cambiar SIM/GPS">
+      <span id="gpsIcon">📡</span>
+      <span class="gps-src sim" id="gpsSource">SIM</span>
+    </div>
     <select id="routeSelect">
       <option value="teques-caracas">Los Teques → Caracas</option>
       <option value="caracas-guaira">Caracas → La Guaira</option>
@@ -363,7 +384,7 @@ body{
   <div class="digital-panel">
     <!-- Speedometer -->
     <div class="speedo-digital">
-      <div class="speed-unit">Velocidad</div>
+      <div class="speed-unit">Velocidad <span class="movement-badge" id="movementBadge"></span></div>
       <div class="speed-value" id="speedDisplay">0</div>
       <div class="speed-kmh">km/h</div>
     </div>
@@ -453,6 +474,7 @@ body{
       <div class="row"><span class="lbl">ALT</span><span class="val" id="elevVal">0 m</span></div>
       <div class="row"><span class="lbl">PEND</span><span class="val" id="slopeDisplay">0%</span></div>
       <div class="row"><span class="lbl">TERR</span><span class="val" id="terrainDisplay">Llano</span></div>
+      <div class="row" id="gpsAccuracyRow" style="display:none"><span class="lbl">GPS</span><span class="val" id="gpsAccDisplay">—</span></div>
     </div>
 
     <div class="copilot-map-overlay" id="copilotOverlay"></div>
@@ -689,8 +711,11 @@ const AIPredictor = {
   },
 
   _detectParking(ctx) {
-    if (ctx.speed === 0 && ctx.engineOn && ctx.parked === false) {
+    if (ctx.movement === 'stopped' && ctx.engineOn && ctx.parked === false) {
       return { justParked: true, msg: 'Vehículo estacionado·Ubicación registrada' };
+    }
+    if (ctx.speed < 1 && ctx.engineOn && ctx.parked === false && ctx.mode === 'gps') {
+      return { justParked: true, msg: 'GPS detecta detención·Ubicación registrada' };
     }
     return null;
   },
@@ -958,7 +983,7 @@ const Weather = {
               cond.label === 'Niebla' ? ['Niebla: mantén distancia'] : []
     };
     document.getElementById('weatherIcon').textContent = S.weather.icon;
-    document.getElementById('weatherTemp').textContent = temp + '°';
+    document.getElementById('weatherTemp').textContent = temp + '°C';
     document.getElementById('weatherCond').textContent = S.weather.cond;
   }
 };
@@ -1006,6 +1031,8 @@ const TripLog = {
       alerts: S.alertsCount,
       duration: Math.round(elapsed / 1000),
       parking: S.parked ? 1 : 0,
+      movement: Telemetry.movementType,
+      source: Telemetry.mode,
       events: []
     });
     this.saveTrips(trips.slice(0, 50));
@@ -1052,6 +1079,8 @@ const TripLog = {
           <span class="trip-stat"><strong>${t.avgSpeed} km/h</strong> vel prom</span>
           <span class="trip-stat"><strong>${Math.floor(t.duration / 60)}m ${t.duration % 60}s</strong> duración</span>
           <span class="trip-stat"><strong>${t.alerts}</strong> alertas</span>
+          ${t.movement ? `<span class="trip-stat"><strong>${t.movement === 'walking' ? '🚶' : t.movement === 'vehicle' ? '🚗' : '🅿️'}</strong> ${t.movement}</span>` : ''}
+          ${t.source ? `<span class="trip-stat" style="color:${t.source === 'gps' ? 'var(--green)' : 'var(--orange)'}"><strong>${t.source.toUpperCase()}</strong></span>` : ''}
         </div>
         ${t.events && t.events.length ? '<div class="trip-events">' + t.events.slice(-5).map(e => `<span>${e.time} ${e.title}</span>`).join('') + '</div>' : ''}
       </div>
@@ -1107,6 +1136,200 @@ const CopilotUI = {
 };
 
 // ============================================================
+//  TELEMETRY MANAGER (GPS + Accelerometer)
+// ============================================================
+const Telemetry = {
+  gpsWatchId: null,
+  motionListening: false,
+  _accelBuffer: [],
+  _stepCount: 0,
+  _lastStepTime: 0,
+  _movementHistory: [],
+  mode: 'sim', // 'sim' | 'gps'
+  gpsAvailable: false,
+  realSpeed: 0,
+  realLat: null,
+  realLng: null,
+  realHeading: 0,
+  gpsAccuracy: Infinity,
+  movementType: 'unknown', // 'stopped' | 'walking' | 'vehicle'
+  _gpsTime: 0,
+
+  start() {
+    this._startGPS();
+    this._startMotion();
+  },
+
+  stop() {
+    if (this.gpsWatchId !== null) {
+      navigator.geolocation.clearWatch(this.gpsWatchId);
+      this.gpsWatchId = null;
+    }
+    this.motionListening = false;
+    this.gpsAvailable = false;
+  },
+
+  _startGPS() {
+    if (!navigator.geolocation) {
+      this._setGPSStatus(false, 'GPS no soportado');
+      return;
+    }
+    this._setGPSStatus(false, 'Buscando...');
+    this.gpsWatchId = navigator.geolocation.watchPosition(
+      (pos) => this._onPosition(pos),
+      (err) => this._onGPSError(err),
+      { enableHighAccuracy: true, timeout: 8000, maximumAge: 3000 }
+    );
+  },
+
+  _onPosition(pos) {
+    this.gpsAvailable = true;
+    this._gpsTime = Date.now();
+    const coords = pos.coords;
+    this.realSpeed = coords.speed !== null && coords.speed !== undefined
+      ? Math.round(coords.speed * 3.6 * 10) / 10  // m/s to km/h
+      : 0;
+    this.realLat = coords.latitude;
+    this.realLng = coords.longitude;
+    this.realHeading = coords.heading || 0;
+    this.gpsAccuracy = coords.accuracy || Infinity;
+
+    // Auto-switch to GPS mode if we get a valid fix and speed is available
+    if (coords.accuracy < 100) {
+      this.mode = 'gps';
+      this._setGPSStatus(true, `${Math.round(coords.accuracy)}m`);
+    }
+
+    // Update map position with real coords
+    if (this.realLat && this.realLng) {
+      MapMgr.updPos(this.realLat, this.realLng);
+    }
+
+    // Classify movement type
+    this._classifyMovement(this.realSpeed);
+
+    // Feed real speed into state only if in GPS mode
+    if (this.mode === 'gps') {
+      S.speed = this.realSpeed;
+      // Sync the slider to show real speed
+      const ss = document.getElementById('speedSlider');
+      if (ss) ss.value = this.realSpeed;
+      document.getElementById('speedVal').textContent = Math.round(this.realSpeed);
+    }
+
+    this._updateUI();
+  },
+
+  _onGPSError(err) {
+    this.gpsAvailable = false;
+    const msgs = {
+      1: 'Permiso denegado',
+      2: 'Señal no disponible',
+      3: 'Tiempo de espera agotado'
+    };
+    this._setGPSStatus(false, msgs[err.code] || 'Error GPS');
+  },
+
+  _startMotion() {
+    if (!window.DeviceMotionEvent) {
+      this._setGPSStatus(this.gpsAvailable, this.gpsAvailable ? 'GPS' : 'No motion');
+      return;
+    }
+    this.motionListening = true;
+    window.addEventListener('devicemotion', (ev) => this._onMotion(ev), { passive: true });
+  },
+
+  _onMotion(ev) {
+    if (!this.motionListening) return;
+    const acc = ev.acceleration || ev.accelerationIncludingGravity;
+    if (!acc) return;
+    const total = Math.sqrt(
+      (acc.x || 0) ** 2 + (acc.y || 0) ** 2 + (acc.z || 0) ** 2
+    );
+    this._accelBuffer.push(total);
+    if (this._accelBuffer.length > 20) this._accelBuffer.shift();
+
+    // Step detection: sharp acceleration spike
+    if (this._accelBuffer.length >= 3) {
+      const prev = this._accelBuffer[this._accelBuffer.length - 2] || 0;
+      const curr = this._accelBuffer[this._accelBuffer.length - 1];
+      const diff = Math.abs(curr - prev);
+      if (diff > 3 && (Date.now() - this._lastStepTime) > 300) {
+        this._stepCount++;
+        this._lastStepTime = Date.now();
+      }
+    }
+  },
+
+  _classifyMovement(speed) {
+    const now = Date.now();
+    this._movementHistory.push({ speed, time: now, steps: this._stepCount });
+    if (this._movementHistory.length > 30) this._movementHistory.shift();
+
+    if (this._movementHistory.length < 5) {
+      this.movementType = 'unknown';
+      return;
+    }
+
+    const avgSpeed = this._movementHistory.reduce((s, m) => s + m.speed, 0) / this._movementHistory.length;
+    const recentPeriod = now - (this._movementHistory[0]?.time || now);
+
+    // Detect steps in last 5 seconds
+    const stepWindow = this._movementHistory.filter(m => (now - m.time) < 5000);
+    const stepRate = stepWindow.length > 0 ? this._stepCount / (recentPeriod / 1000) * 60 : 0;
+
+    if (avgSpeed < 1 && this._movementHistory.every(m => m.speed < 1)) {
+      this.movementType = 'stopped';
+    } else if (avgSpeed < 7 && stepRate > 20) {
+      // Low speed + consistent step pattern = walking
+      this.movementType = 'walking';
+    } else if (avgSpeed >= 7) {
+      this.movementType = 'vehicle';
+    } else if (avgSpeed < 7 && stepRate < 10) {
+      this.movementType = 'stopped';
+    } else {
+      this.movementType = 'unknown';
+    }
+  },
+
+  _setGPSStatus(available, label) {
+    const src = document.getElementById('gpsSource');
+    if (!src) return;
+    src.textContent = label;
+    src.className = 'gps-src' + (available ? ' active' : ' sim');
+    document.getElementById('gpsIcon').textContent = available ? '🛰️' : '📡';
+  },
+
+  _updateUI() {
+    const badge = document.getElementById('movementBadge');
+    if (!badge) return;
+    const labels = {
+      vehicle: '🚗 Vehículo',
+      walking: '🚶 A pie',
+      stopped: '🅿️ Detenido',
+      unknown: ''
+    };
+    badge.textContent = labels[this.movementType] || '';
+    badge.className = 'movement-badge ' + this.movementType;
+
+    // GPS accuracy in elevation mini
+    const accRow = document.getElementById('gpsAccuracyRow');
+    const accDisp = document.getElementById('gpsAccDisplay');
+    if (accRow && accDisp) {
+      if (this.gpsAvailable) {
+        accRow.style.display = 'flex';
+        accDisp.textContent = this.mode === 'gps' ? `${Math.round(this.gpsAccuracy)}m` : 'SIM';
+        accDisp.style.color = this.gpsAccuracy < 30 ? 'var(--green)' : this.gpsAccuracy < 100 ? 'var(--orange)' : 'var(--red)';
+      } else {
+        accRow.style.display = 'none';
+      }
+    }
+  },
+
+  get isGPSMode() { return this.mode === 'gps' && this.gpsAvailable; }
+};
+
+// ============================================================
 //  SIMULATION
 // ============================================================
 const Sim = {
@@ -1121,17 +1344,25 @@ const Sim = {
     TripLog.startTrip();
     this.aiLoop();
     Weather.update(S.altitude);
+    Telemetry.start();
   },
 
   stop() {
     if (this._int) { clearInterval(this._int); this._int = null; }
     S.running = false;
     TripLog.endTrip();
+    Telemetry.stop();
   },
 
   tick() {
     this._tick++;
-    const speed = S.speed, gear = S.gear, slope = S.slope, throttle = S.throttle;
+    let speed = S.speed, gear = S.gear, slope = S.slope, throttle = S.throttle;
+
+    // Use real telemetry speed when GPS is available
+    if (Telemetry.isGPSMode) {
+      speed = Telemetry.realSpeed;
+      S.speed = speed;
+    }
 
     // Auto-detect gear
     const rpm = calcRPM(speed, gear);
@@ -1145,8 +1376,19 @@ const Sim = {
     if (S.speedHistory.length > 50) S.speedHistory.shift();
     S.predictedSpeed = predictSpeed(S.speedHistory);
 
-    // Position
-    if (speed > 0 && S.route) {
+    // Position (skip sim route when using real GPS coordinates)
+    if (Telemetry.isGPSMode) {
+      // Real GPS already updates position via Telemetry._onPosition
+      // Calculate slope from real elevation data
+      if (Telemetry.realLat && Telemetry.realLng) {
+        const e1 = MapMgr.getElev(Telemetry.realLat, Telemetry.realLng);
+        if (S.altitude !== e1) {
+          const elevDiff = e1 - S.altitude;
+          S.slope = Math.max(-15, Math.min(15, elevDiff * 10)); // rough slope estimation
+          S.altitude = e1;
+        }
+      }
+    } else if (speed > 0 && S.route) {
       const route = MapMgr.routes[S.route];
       if (route) {
         this._routeProg += (speed / 3600) * this.dt;
@@ -1166,45 +1408,58 @@ const Sim = {
       }
     }
 
-    // Parking detection
-    if (speed === 0 && S.running) {
+    // Parking detection (uses Telemetry movement type when GPS available)
+    const isStopped = Telemetry.isGPSMode
+      ? Telemetry.movementType === 'stopped'
+      : speed < 1;
+
+    if (isStopped && S.running) {
       this._parkCount += this.dt;
-      if (this._parkCount > 30 && !S.parked) { // parked for > 3s
+      if (this._parkCount > 30 && !S.parked) {
         S.parked = true;
         S.parkTime = Date.now();
+        if (Telemetry.isGPSMode) {
+          CopilotUI.show('info', '🅿️ Estacionado', `GPS detecta detención en [${Telemetry.realLat?.toFixed(4)}, ${Telemetry.realLng?.toFixed(4)}]`, 4000);
+        }
       }
     } else {
       if (this._parkCount > 30 && S.parked) {
-        // Just left parking
         S.parked = false;
         this._parkCount = 0;
         CopilotUI.show('success', 'Inicio de viaje', 'Saliendo de estacionamiento·Ruta registrada', 3000);
         TripLog.startTrip();
       }
       this._parkCount = 0;
-      S.parked = false;
+      if (!Telemetry.isGPSMode) S.parked = false;
     }
 
     // Fuel
-    const eff = calcFuelRate(speed, gear, slope, throttle);
-    S.eff = isFinite(eff) ? eff : 0;
-    const tickCons = speed > 0 && isFinite(eff) && eff > 0 ? (speed / 3600) * this.dt / eff : 0;
-    if (!(speed > 20 && slope < -5 && throttle <= 5)) {
-      S.fuel = Math.max(0, S.fuel - tickCons);
-      S.burned += tickCons;
+    // When walking, skip vehicle-specific calculations
+    const isWalking = Telemetry.movementType === 'walking';
+
+    if (!isWalking) {
+      const eff = calcFuelRate(speed, gear, slope, throttle);
+      S.eff = isFinite(eff) ? eff : 0;
+      const tickCons = speed > 0 && isFinite(eff) && eff > 0 ? (speed / 3600) * this.dt / eff : 0;
+      if (!(speed > 20 && slope < -5 && throttle <= 5)) {
+        S.fuel = Math.max(0, S.fuel - tickCons);
+        S.burned += tickCons;
+      }
+    } else {
+      S.eff = 0;
     }
 
     const distTick = (speed / 3600) * this.dt;
     S.dist += distTick;
 
     // Eco
-    S.eco = calcEco(speed, rpm, slope);
-    if (rpm >= 1800 && rpm <= 2400 && speed >= 55 && speed <= 70) S.optTime += this.dt;
+    S.eco = isWalking ? 100 : calcEco(speed, rpm, slope);
+    if (!isWalking && rpm >= 1800 && rpm <= 2400 && speed >= 55 && speed <= 70) S.optTime += this.dt;
     S.totalTime += this.dt;
-    if (rpm > 0) { S.rpmSum += rpm; S.rpmCount++; }
+    if (!isWalking && rpm > 0) { S.rpmSum += rpm; S.rpmCount++; }
     if (speed > 0) { S.speedSum += speed; S.speedCount++; }
     S.maxSlope = Math.max(S.maxSlope, Math.abs(slope));
-    S.range = S.fuel * (isFinite(eff) && eff > 0 ? eff : BASE_KPL);
+    S.range = isWalking ? 0 : S.fuel * (isFinite(S.eff) && S.eff > 0 ? S.eff : BASE_KPL);
 
     // Weather (every 30 ticks)
     if (this._tick % 30 === 0) Weather.update(S.altitude);
@@ -1213,38 +1468,47 @@ const Sim = {
   },
 
   _updateUI(speed, rpm, gear, slope, throttle) {
+    const isWalking = Telemetry.movementType === 'walking';
     const sd = document.getElementById('speedDisplay');
     sd.textContent = Math.round(speed);
-    sd.className = 'speed-value' + (speed > 75 ? ' warn' : '') + (speed > 120 ? ' alert' : '');
+    sd.className = 'speed-value' + (isWalking ? '' : speed > 75 ? ' warn' : '') + (speed > 120 ? ' alert' : '');
 
-    document.getElementById('rpmDisplay').textContent = Math.round(rpm);
-    document.getElementById('gearDisplay').textContent = gear > 0 ? gear : 'N';
-    document.getElementById('gearConfidence').textContent = gear > 0 ? `Marcha ${gear}` : 'Punto Muerto';
-    document.getElementById('predictedSpeedDisplay').textContent = Math.round(S.predictedSpeed);
+    document.getElementById('rpmDisplay').textContent = isWalking ? '—' : Math.round(rpm);
+    document.getElementById('gearDisplay').textContent = isWalking ? '🚶' : (gear > 0 ? gear : 'N');
+    document.getElementById('gearConfidence').textContent = isWalking ? 'Caminando' : (gear > 0 ? `Marcha ${gear}` : 'Punto Muerto');
+    document.getElementById('predictedSpeedDisplay').textContent = isWalking ? '—' : Math.round(S.predictedSpeed);
 
     // Fuel
-    const fl = document.getElementById('fuelLevelDisplay');
-    fl.textContent = S.fuel.toFixed(1);
-    fl.className = 'big' + (S.fuel < 10 ? ' red' : S.fuel < 23 ? ' orange' : ' green');
-    document.getElementById('fuelBarFill').style.width = `${(S.fuel / FUEL_CAP) * 100}%`;
-    document.getElementById('efficiencyDisplay').textContent = isFinite(S.eff) && S.eff > 0 ? S.eff.toFixed(1) : '∞';
-    document.getElementById('efficiencyDisplay').className = 'big' + (S.eff < 6 ? ' red' : ' green');
-    const rd = document.getElementById('rangeDisplay');
-    rd.textContent = Math.round(S.range);
-    rd.style.color = S.range < 50 ? 'var(--red)' : S.range < 100 ? 'var(--orange)' : 'var(--cyan)';
+    if (!isWalking) {
+      const fl = document.getElementById('fuelLevelDisplay');
+      fl.textContent = S.fuel.toFixed(1);
+      fl.className = 'big' + (S.fuel < 10 ? ' red' : S.fuel < 23 ? ' orange' : ' green');
+      document.getElementById('fuelBarFill').style.width = `${(S.fuel / FUEL_CAP) * 100}%`;
+      document.getElementById('efficiencyDisplay').textContent = isFinite(S.eff) && S.eff > 0 ? S.eff.toFixed(1) : '∞';
+      document.getElementById('efficiencyDisplay').className = 'big' + (S.eff < 6 ? ' red' : ' green');
+      const rd = document.getElementById('rangeDisplay');
+      rd.textContent = Math.round(S.range);
+      rd.style.color = S.range < 50 ? 'var(--red)' : S.range < 100 ? 'var(--orange)' : 'var(--cyan)';
+    } else {
+      document.getElementById('fuelLevelDisplay').textContent = '🚶';
+      document.getElementById('fuelLevelDisplay').className = 'big';
+      document.getElementById('fuelBarFill').style.width = '0%';
+      document.getElementById('efficiencyDisplay').textContent = '—';
+      document.getElementById('rangeDisplay').textContent = '—';
+    }
 
     // Map badges
     document.getElementById('mapSlope').textContent = slope.toFixed(1) + '%';
-    document.getElementById('mapEfficiency').textContent = isFinite(S.eff) ? S.eff.toFixed(1) : '∞';
+    document.getElementById('mapEfficiency').textContent = isWalking ? '🚶' : (isFinite(S.eff) ? S.eff.toFixed(1) : '∞');
     document.getElementById('elevVal').textContent = Math.round(S.altitude) + 'm';
     document.getElementById('slopeDisplay').textContent = slope.toFixed(1) + '%';
     document.getElementById('slopeDisplay').className = 'val' + (slope > 5 ? ' up' : slope < -5 ? ' down' : '');
     document.getElementById('terrainDisplay').textContent = slope > 5 ? '⬆ Subida' : slope < -5 ? '⬇ Bajada' : '➡ Llano';
 
     // Telemetry
-    document.getElementById('tripDist').textContent = S.dist.toFixed(1) + ' km';
-    document.getElementById('tripFuel').textContent = S.burned.toFixed(2) + ' L';
-    document.getElementById('tripAvgRpm').textContent = S.rpmCount > 0 ? Math.round(S.rpmSum / S.rpmCount) : 0;
+    document.getElementById('tripDist').textContent = S.dist.toFixed(1) + (isWalking ? ' km (a pie)' : ' km');
+    document.getElementById('tripFuel').textContent = isWalking ? '—' : S.burned.toFixed(2) + ' L';
+    document.getElementById('tripAvgRpm').textContent = isWalking ? '—' : (S.rpmCount > 0 ? Math.round(S.rpmSum / S.rpmCount) : 0);
     document.getElementById('tripAvgSpeed').textContent = S.speedCount > 0 ? Math.round(S.speedSum / S.speedCount) + ' km/h' : '0';
     document.getElementById('tripMaxSlope').textContent = S.maxSlope.toFixed(1) + '%';
     document.getElementById('tripAlerts').textContent = S.alertsCount;
@@ -1252,7 +1516,7 @@ const Sim = {
     // Eco
     document.getElementById('ecoScoreDisplay').textContent = Math.round(S.eco);
     document.getElementById('ecoScoreDisplay').style.color = S.eco >= 80 ? '#00ff88' : S.eco >= 50 ? '#ff8800' : '#ff2244';
-    document.getElementById('optTimeDisplay').textContent = Math.round(S.optTime);
+    document.getElementById('optTimeDisplay').textContent = isWalking ? '—' : Math.round(S.optTime);
     document.getElementById('tripTimeDisplay').textContent = this._fmtTime(S.totalTime);
     EcoRing.draw(S.eco);
   },
@@ -1272,7 +1536,8 @@ const Sim = {
         const result = await AIPredictor.think({
           speed: S.speed, rpm: S.rpm, gear: S.gear, slope: S.slope,
           lat: S.pos.lat, lng: S.pos.lng, engineOn: S.speed > 0 || S.running,
-          parked: S.parked, weather: S.weather
+          parked: S.parked, weather: S.weather,
+          movement: Telemetry.movementType, mode: Telemetry.mode
         });
 
         // Build reasoning text
@@ -1353,6 +1618,18 @@ function initUI() {
   document.getElementById('routeSelect').addEventListener('change', (e) => {
     MapMgr.init(e.target.value);
     Sim._routeProg = 0;
+  });
+  document.getElementById('gpsBadge').addEventListener('click', () => {
+    if (Telemetry.gpsAvailable) {
+      Telemetry.mode = Telemetry.mode === 'gps' ? 'sim' : 'gps';
+      Telemetry._setGPSStatus(Telemetry.mode === 'gps', Telemetry.mode === 'gps' ? `${Math.round(Telemetry.gpsAccuracy)}m` : 'SIM');
+      CopilotUI.show(Telemetry.mode === 'gps' ? 'success' : 'info',
+        Telemetry.mode === 'gps' ? '🛰️ GPS Activado' : '📡 Modo Simulación',
+        Telemetry.mode === 'gps' ? 'Usando datos reales de GPS' : 'Usando controles manuales',
+        2500);
+    } else {
+      CopilotUI.show('warning', '📡 GPS no disponible', 'Busca una zona con señal GPS abierta', 3000);
+    }
   });
   setInterval(() => {
     document.getElementById('clockDisplay').textContent = new Date().toLocaleTimeString('es-VE', { hour: '2-digit', minute: '2-digit', hour12: false });
