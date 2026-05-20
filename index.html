@@ -1575,7 +1575,7 @@ const AIPredictor = {
     const dirStr = dir.towards ? `, sentido ${dir.towards}` : '';
     const loc = `${road}, Km ${km}${dirStr}`;
 
-    // Look for obstacles AHEAD within 500m to 5000m (predictive)
+    // Look for obstacles AHEAD within configured radius (2–5 km)
     let nearestObstacle = null;
     let nearestDist = Infinity;
     const maxDist = S.settings.detectRadius;
@@ -1588,8 +1588,10 @@ const AIPredictor = {
       }
     }
 
-    // Only announce traffic if user speed is reduced AND there's an obstacle ahead, or just slow speed
-    if (ctx.speed < 15 && ctx.speed > 0 && nearestObstacle && nearestDist < 2000) {
+    // Only report risk if there's an obstacle within the configured radius
+    if (!nearestObstacle) return null;
+
+    if (ctx.speed < 15 && ctx.speed > 0 && nearestDist < Math.min(2000, maxDist)) {
       // Queue caused by obstacle ahead
       const obsName = nearestObstacle.name || nearestObstacle.type || 'obstáculo';
       const altRoute = this._getAlternateRoute(ctx.routeId || S.route, nearestObstacle.road || road);
@@ -1602,7 +1604,7 @@ const AIPredictor = {
       return { risk: 'alta', msg: `Tráfico denso en ${loc}${altMsg}`, level: 'warning', loc, road, km, dir: dir.towards };
     }
     if (ctx.speed < 15 && ctx.speed > 0) {
-      const altRoute = nearestObstacle ? this._getAlternateRoute(ctx.routeId || S.route, road) : null;
+      const altRoute = this._getAlternateRoute(ctx.routeId || S.route, road);
       const altMsg = altRoute ? `. ${altRoute}` : '';
       return { risk: 'media', msg: `Flujo lento en ${loc}${altMsg}`, level: 'info', loc, road, km, dir: dir.towards };
     }
@@ -3024,10 +3026,6 @@ const Sim = {
             const msg = `Tráfico lento en ${road}, Km ${km}${dirStr}: ${cause} a ${Math.round(obsDist)}m${altMsg}`;
             CopilotUI.show('warning', '🚗 Tráfico', msg, 5000);
             Voice.sayUnique('traffic_5s', msg, 25000);
-            this._lastTrafficJamAlert = Date.now();
-          } else {
-            const msg = `Tráfico lento en ${road}, Km ${km}${dirStr}. Velocidad: ${Math.round(S.speed)} km/h`;
-            CopilotUI.show('info', '🚗 Tráfico', msg, 4000);
             this._lastTrafficJamAlert = Date.now();
           }
         }
