@@ -298,6 +298,17 @@ body{
   background:rgba(255,255,255,.05);border-radius:3px;padding:1px 6px;font-size:8px;color:var(--text-dim)
 }
 .clear-log{font-size:9px;color:var(--red);cursor:pointer;font-family:var(--font-mono)}
+.trip-detail-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;margin-bottom:12px}
+.trip-detail-stat{background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px 10px;text-align:center}
+.trip-detail-stat .td-label{font-size:8px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-dim)}
+.trip-detail-stat .td-value{font-size:16px;font-family:var(--font-display);color:var(--cyan);margin-top:2px}
+.trip-detail-stat .td-sub{font-size:8px;color:var(--text-dim);margin-top:1px}
+.trip-detail-chart{background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px;margin-bottom:12px}
+.trip-detail-chart canvas{width:100%;height:200px;display:block}
+.trip-detail-section{margin-bottom:12px}
+.trip-detail-section h4{font-family:var(--font-display);font-size:10px;color:var(--cyan);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px}
+.ver-detalle-btn{font-size:8px;color:var(--cyan);cursor:pointer;background:none;border:1px solid var(--border);border-radius:4px;padding:2px 8px;margin-top:4px;display:inline-block}
+.ver-detalle-btn:hover{background:rgba(0,229,255,.08);border-color:var(--cyan)}
 
 /* Controls bar */
 .controls-bar{
@@ -609,6 +620,19 @@ body{
       </div>
     </div>
     <div class="modal-body" id="tripLogBody">
+      <div class="empty">Cargando...</div>
+    </div>
+  </div>
+</div>
+
+<!-- Trip Detail Modal -->
+<div class="modal-overlay" id="tripDetailModal">
+  <div class="modal" style="max-width:800px">
+    <div class="modal-header">
+      <h2>📊 Detalle del Viaje</h2>
+      <button class="modal-close" onclick="document.getElementById('tripDetailModal').classList.remove('open')">✕</button>
+    </div>
+    <div class="modal-body" id="tripDetailBody">
       <div class="empty">Cargando...</div>
     </div>
   </div>
@@ -1174,6 +1198,9 @@ const S = {
   parked: false, parkTime: 0,
   tripStart: null, tripActive: false,
   speedHistory: [],
+  tripSamples: [],
+  maxSpeed: 0, minSpeed: Infinity, maxRpm: 0,
+  gearChanges: 0, lastGear: 0, fuelSaved: 0,
   weather: { temp: 24, cond: 'Despejado', icon: '☀️', alerts: [] },
   engineTemp: 85,
   ai: { status: 'Idle', lastThinking: '' },
@@ -2226,6 +2253,8 @@ const TripLog = {
     S.dist = 0; S.burned = 0; S.eco = 100; S.optTime = 0; S.totalTime = 0;
     S.rpmSum = 0; S.rpmCount = 0; S.maxSlope = 0; S.speedSum = 0; S.speedCount = 0;
     S.alertsCount = 0;
+    S.maxSpeed = 0; S.minSpeed = Infinity; S.maxRpm = 0;
+    S.gearChanges = 0; S.lastGear = 0; S.fuelSaved = 0; S.tripSamples = [];
     document.getElementById('tripTimeDisplay').textContent = '00:00';
   },
 
@@ -2233,6 +2262,8 @@ const TripLog = {
     if (!S.tripActive) return;
     S.tripActive = false;
     const elapsed = Date.now() - S.tripStart;
+    const baselineConsumption = S.dist / 12;
+    S.fuelSaved = Math.max(0, baselineConsumption - S.burned);
     const trips = this.getTrips();
     trips.unshift({
       id: Date.now(),
@@ -2243,14 +2274,20 @@ const TripLog = {
       fuel: Math.round(S.burned * 100) / 100,
       eco: Math.round(S.eco),
       avgSpeed: S.speedCount > 0 ? Math.round(S.speedSum / S.speedCount) : 0,
+      maxSpeed: Math.round(S.maxSpeed),
+      minSpeed: S.minSpeed === Infinity ? 0 : Math.round(S.minSpeed),
       maxSlope: Math.round(S.maxSlope * 10) / 10,
       avgRpm: S.rpmCount > 0 ? Math.round(S.rpmSum / S.rpmCount) : 0,
+      maxRpm: Math.round(S.maxRpm),
+      gearChanges: S.gearChanges,
+      fuelSaved: Math.round(S.fuelSaved * 100) / 100,
       alerts: S.alertsCount,
       duration: Math.round(elapsed / 1000),
       parking: S.parked ? 1 : 0,
       movement: Telemetry.movementType,
       source: Telemetry.mode,
-      events: []
+      events: [],
+      samples: S.tripSamples.slice()
     });
     this.saveTrips(trips.slice(0, 50));
     // Award XP for trip
@@ -2285,7 +2322,7 @@ const TripLog = {
       body.innerHTML = '<div class="empty">📭 No hay viajes registrados aún.<br><span style="font-size:10px;color:var(--text-dim)">Los viajes se guardan automáticamente al detener el vehículo.</span></div>';
       return;
     }
-    body.innerHTML = trips.map(t => `
+    body.innerHTML = trips.map((t, i) => `
       <div class="trip-card">
         <div class="trip-header">
           <span class="trip-date">${t.date} · ${t.time}</span>
@@ -2298,10 +2335,12 @@ const TripLog = {
           <span class="trip-stat"><strong>${t.avgSpeed} km/h</strong> vel prom</span>
           <span class="trip-stat"><strong>${Math.floor(t.duration / 60)}m ${t.duration % 60}s</strong> duración</span>
           <span class="trip-stat"><strong>${t.alerts}</strong> alertas</span>
+          ${t.fuelSaved > 0 ? `<span class="trip-stat" style="color:var(--green)"><strong>${t.fuelSaved} L</strong> ahorrado</span>` : ''}
           ${t.movement ? `<span class="trip-stat"><strong>${t.movement === 'walking' ? '🚶' : t.movement === 'vehicle' ? '🚗' : '🅿️'}</strong> ${t.movement}</span>` : ''}
           ${t.source ? `<span class="trip-stat" style="color:${t.source === 'gps' ? 'var(--green)' : 'var(--orange)'}"><strong>${t.source.toUpperCase()}</strong></span>` : ''}
         </div>
         ${t.events && t.events.length ? '<div class="trip-events">' + t.events.slice(-5).map(e => `<span>${e.time} ${e.title}</span>`).join('') + '</div>' : ''}
+        <div style="margin-top:4px"><span class="ver-detalle-btn" onclick="TripLog.showDetail(${i})">📊 Ver detalle</span></div>
       </div>
     `).join('');
   },
@@ -2560,7 +2599,7 @@ const Telemetry = {
 const Sim = {
   _int: null, _tick: 0, _routeProg: 0, _aiTimer: null,
   _parkCount: 0, _wasMoving: false, _lastAI: 0, _lastHazardWarn: {},
-  _lastFuelPromptKm: 0,
+  _lastFuelPromptKm: 0, _lastTrafficJamAlert: 0,
   _drivingMode: { label: '🌿 ECO', color: 'var(--green)', target: 0 },
   dt: 0.1,
 
@@ -2695,6 +2734,18 @@ const Sim = {
     if (speed > 0) { S.speedSum += speed; S.speedCount++; }
     S.maxSlope = Math.max(S.maxSlope, Math.abs(slope));
     S.range = isWalking ? 0 : S.fuel * (isFinite(S.eff) && S.eff > 0 ? S.eff : BASE_KPL);
+
+    // Detailed trip tracking
+    if (speed > 0) {
+      if (speed > S.maxSpeed) S.maxSpeed = speed;
+      if (speed < S.minSpeed) S.minSpeed = speed;
+    }
+    if (rpm > S.maxRpm) S.maxRpm = rpm;
+    if (gear > 0 && gear !== S.lastGear) { S.gearChanges++; S.lastGear = gear; }
+    if (this._tick % 10 === 0) {
+      S.tripSamples.push({ t: S.totalTime, s: Math.round(speed), r: Math.round(rpm), g: gear, sl: Math.round(slope * 10) / 10 });
+      if (S.tripSamples.length > 3600) S.tripSamples.shift();
+    }
 
     // Weather (every 300 ticks = ~30s)
     if (this._tick % 300 === 0) Weather.fetch(S.pos.lat, S.pos.lng);
@@ -2875,12 +2926,13 @@ const Sim = {
 
         // Build reasoning text
         const lines = [];
-        if (result.trafficRisk) {
+        if (result.trafficRisk && (Date.now() - this._lastTrafficJamAlert) > 30000) {
           const delayPart = result.trafficDelay && result.trafficDelay.delayMin > 0 ?
             ` · ⏱ Retraso: ${result.trafficDelay.delayMin} min` : '';
           lines.push(`🚦 ${result.trafficRisk.msg}${delayPart}`);
           this._maybeAlert(result.trafficRisk.level, 'Tráfico', result.trafficRisk.msg + delayPart);
           Voice.announceTraffic(result.trafficRisk.risk, result.trafficRisk.msg, result.trafficRisk.loc, result.trafficDelay?.delayMin);
+          this._lastTrafficJamAlert = Date.now();
         }
         if (result.checkpointProximity) {
           const cp = result.checkpointProximity;
@@ -2952,8 +3004,8 @@ const Sim = {
           }
         }
 
-        // Traffic jam check (every 5s, checks obstacles within configured radius ahead)
-        if (this._tick % 50 === 0) {
+        // Traffic jam check (every 5s, throttled to 30s, checks obstacles within configured radius)
+        if (this._tick % 50 === 0 && (Date.now() - this._lastTrafficJamAlert) > 30000) {
           const road = MapMgr.getRoadName(S.route);
           const km = MapMgr.getKm(S.pos.lat, S.pos.lng);
           const dir = MapMgr.getDirection(S.route, S.pos.lat, S.pos.lng);
@@ -2972,9 +3024,11 @@ const Sim = {
             const msg = `Tráfico lento en ${road}, Km ${km}${dirStr}: ${cause} a ${Math.round(obsDist)}m${altMsg}`;
             CopilotUI.show('warning', '🚗 Tráfico', msg, 5000);
             Voice.sayUnique('traffic_5s', msg, 25000);
+            this._lastTrafficJamAlert = Date.now();
           } else {
             const msg = `Tráfico lento en ${road}, Km ${km}${dirStr}. Velocidad: ${Math.round(S.speed)} km/h`;
             CopilotUI.show('info', '🚗 Tráfico', msg, 4000);
+            this._lastTrafficJamAlert = Date.now();
           }
         }
 
